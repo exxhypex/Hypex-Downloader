@@ -12,7 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -138,7 +138,7 @@ fun MainScreen(
                 NavigationBarItem(
                     selected = currentDestination == AppDestination.PLAYLISTS,
                     onClick = { currentDestination = AppDestination.PLAYLISTS },
-                    icon = { Icon(Icons.Default.PlaylistPlay, contentDescription = "Playlists") },
+                    icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = "Playlists") },
                     label = { Text("Playlists", fontSize = 11.sp, fontWeight = FontWeight.Medium) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = Color.Black,
