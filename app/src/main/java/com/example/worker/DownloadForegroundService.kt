@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.core.model.DownloadProgress
@@ -21,19 +22,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 
 class DownloadForegroundService : Service() {
 
     companion object {
         const val CHANNEL_ID = "hypex_downloader_channel"
         const val NOTIFICATION_ID = 1001
-
         const val ACTION_START = "com.example.worker.START"
         const val ACTION_PAUSE = "com.example.worker.PAUSE"
         const val ACTION_RESUME = "com.example.worker.RESUME"
         const val ACTION_CANCEL = "com.example.worker.CANCEL"
-
         const val EXTRA_TASK_ID = "extra_task_id"
 
         fun startDownload(context: Context, taskId: Long) {
@@ -41,11 +40,8 @@ class DownloadForegroundService : Service() {
                 action = ACTION_START
                 putExtra(EXTRA_TASK_ID, taskId)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+            else context.startService(intent)
         }
 
         fun pauseDownload(context: Context, taskId: Long) {
@@ -83,43 +79,33 @@ class DownloadForegroundService : Service() {
         super.onCreate()
         repository = DownloadRepository(applicationContext)
         createNotificationChannel()
-
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HYPEX::DownloadWakeLock")
-        wakeLock?.acquire(10 * 60 * 1000L /* 10 minutes timeout */)
+        wakeLock?.acquire(10 * 60 * 1000L)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val taskId = intent?.getLongExtra(EXTRA_TASK_ID, -1L) ?: -1L
-        val action = intent?.action
-
-        when (action) {
-            ACTION_START, ACTION_RESUME -> {
-                if (taskId != -1L) {
-                    activeTaskId = taskId
-                    startForeground(NOTIFICATION_ID, createNotification("Starting download...", 0, "--", "--"))
-                    executeDownload(taskId)
+        when (intent?.action) {
+            ACTION_START, ACTION_RESUME -> if (taskId != -1L) {
+                activeTaskId = taskId
+                startForeground(NOTIFICATION_ID, createNotification("Starting download...", 0, "--", "--"))
+                executeDownload(taskId)
+            }
+            ACTION_PAUSE -> if (taskId != -1L) {
+                serviceScope.launch {
+                    repository.pauseDownload(taskId)
+                    updateNotification("Download paused", 0, "", "", isPaused = true)
                 }
             }
-            ACTION_PAUSE -> {
-                if (taskId != -1L) {
-                    serviceScope.launch {
-                        repository.pauseDownload(taskId)
-                        updateNotification("Download paused", 0, "", "", isPaused = true)
-                    }
-                }
-            }
-            ACTION_CANCEL -> {
-                if (taskId != -1L) {
-                    serviceScope.launch {
-                        repository.cancelDownload(taskId)
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    }
+            ACTION_CANCEL -> if (taskId != -1L) {
+                serviceScope.launch {
+                    repository.cancelDownload(taskId)
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
         }
-
         return START_NOT_STICKY
     }
 
@@ -133,13 +119,26 @@ class DownloadForegroundService : Service() {
             }
 
             repository.markStatus(taskId, DownloadStatus.DOWNLOADING)
+            val lastPersistAt = AtomicLong(0L)
+            val lastNotificationAt = AtomicLong(0L)
 
             val result = repository.engineBridge.startDownload(task) { progress: DownloadProgress ->
-                serviceScope.launch {
-                    repository.updateProgress(progress)
-                    val speedStr = String.format("%.1f MB/s", progress.speed / (1024f * 1024f))
-                    val etaStr = "${progress.eta}s"
-                    updateNotification(task.title, progress.progress.toInt(), speedStr, etaStr)
+                val now = SystemClock.elapsedRealtime()
+                val terminal = progress.status.equals("FINISHED", ignoreCase = true) ||
+                    progress.status.equals("COMPLETED", ignoreCase = true)
+                val persist = terminal || now - lastPersistAt.get() >= 1_000L
+                val notify = terminal || now - lastNotificationAt.get() >= 1_500L
+
+                if (persist || notify) {
+                    if (persist) lastPersistAt.set(now)
+                    if (notify) lastNotificationAt.set(now)
+                    serviceScope.launch {
+                        if (persist) repository.updateProgress(progress)
+                        if (notify) {
+                            val speedStr = String.format("%.1f MB/s", progress.speed / (1024f * 1024f))
+                            updateNotification(task.title, progress.progress.toInt(), speedStr, "${progress.eta}s")
+                        }
+                    }
                 }
             }
 
@@ -148,11 +147,11 @@ class DownloadForegroundService : Service() {
                 repository.markCompleted(taskId, file.absolutePath)
                 showCompletedNotification(task.title)
             } else {
-                val err = result.exceptionOrNull()
-                val errMsg = err?.message ?: "Download failed"
-                if (!errMsg.contains("CANCELLED") && !errMsg.contains("PAUSED")) {
-                    repository.markFailed(taskId, "DOWNLOAD_ERROR", errMsg)
-                    showFailedNotification(task.title, errMsg)
+                val error = result.exceptionOrNull()
+                val message = error?.message ?: "Download failed"
+                if (!message.contains("CANCELLED") && !message.contains("PAUSED")) {
+                    repository.markFailed(taskId, "DOWNLOAD_ERROR", message)
+                    showFailedNotification(task.title, message)
                 }
             }
 
@@ -163,15 +162,9 @@ class DownloadForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "HYPEX Downloads",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shows live download progress and media tasks"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "HYPEX Downloads", NotificationManager.IMPORTANCE_LOW)
+                .apply { description = "Shows live download progress and media tasks" }
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
     }
 
@@ -187,7 +180,6 @@ class DownloadForegroundService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val pauseResumeIntent = Intent(this, DownloadForegroundService::class.java).apply {
             action = if (isPaused) ACTION_RESUME else ACTION_PAUSE
             putExtra(EXTRA_TASK_ID, activeTaskId)
@@ -196,7 +188,6 @@ class DownloadForegroundService : Service() {
             this, 1, pauseResumeIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val cancelIntent = Intent(this, DownloadForegroundService::class.java).apply {
             action = ACTION_CANCEL
             putExtra(EXTRA_TASK_ID, activeTaskId)
@@ -205,9 +196,7 @@ class DownloadForegroundService : Service() {
             this, 2, cancelIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
         val contentText = if (isPaused) "Paused" else "$progress% • $speed • ETA: $eta"
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(contentText)
@@ -224,15 +213,9 @@ class DownloadForegroundService : Service() {
             .build()
     }
 
-    private fun updateNotification(
-        title: String,
-        progress: Int,
-        speed: String,
-        eta: String,
-        isPaused: Boolean = false
-    ) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager?.notify(NOTIFICATION_ID, createNotification(title, progress, speed, eta, isPaused))
+    private fun updateNotification(title: String, progress: Int, speed: String, eta: String, isPaused: Boolean = false) {
+        getSystemService(NotificationManager::class.java)
+            ?.notify(NOTIFICATION_ID, createNotification(title, progress, speed, eta, isPaused))
     }
 
     private fun showCompletedNotification(title: String) {
@@ -241,40 +224,33 @@ class DownloadForegroundService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Download Complete")
             .setContentText(title)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(pendingOpen)
             .setAutoCancel(true)
             .build()
-
-        val manager = getSystemService(NotificationManager::class.java)
-        manager?.notify(NOTIFICATION_ID + 1, notif)
+        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID + 1, notification)
     }
 
     private fun showFailedNotification(title: String, error: String) {
-        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Download Failed")
             .setContentText("$title: $error")
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setAutoCancel(true)
             .build()
-
-        val manager = getSystemService(NotificationManager::class.java)
-        manager?.notify(NOTIFICATION_ID + 2, notif)
+        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID + 2, notification)
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         currentDownloadJob?.cancel()
         serviceScope.cancel()
         try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (ignored: Exception) {}
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) { }
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
