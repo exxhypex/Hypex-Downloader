@@ -33,7 +33,7 @@ class _ProgressCallback:
         self.target = target
 
     def __call__(self, payload):
-        self.target.onProgress(json.dumps(payload))
+        self.target.emitProgress(json.dumps(payload))
 
 def download_media(task_id, url, format_selector, output_template, callback):
     engine = _get_engine()
