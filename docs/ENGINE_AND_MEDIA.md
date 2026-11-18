@@ -11,7 +11,7 @@ HYPEX now uses a hybrid engine architecture:
 
 - Chaquopy 17.2.0 is configured for Android Gradle Plugin 9.x and the app minimum API 24.
 - Python 3.13 and yt-dlp are packaged into the APK for arm64-v8a and x86_64.
-- Runtime startup is lazy: Python initializes on the first extraction or site download, off the main thread.
+- Runtime startup is lazy: app initialization prepares only native storage/network paths. Chaquopy starts on the first supported website extraction or download, off the main thread; opening the home screen does not initialize Python.
 - Python uses the app private filesDir for cookies and download output; it no longer assumes a hard-coded package data path.
 - TLS certificate validation is enabled. Extraction errors are surfaced instead of being silently ignored.
 - Format catalogs are sorted to prefer ready-to-play muxed streams and capped at 60 visible rows to reduce UI work.
@@ -38,4 +38,4 @@ The Python bridge returns normalized media, format, playlist, and subtitle data 
 - Main destination navigation no longer crossfades two large screen trees simultaneously.
 - Format lists are bounded to 60 entries and prioritize muxed formats.
 - Progress persistence is throttled to one write per second, while notification updates are throttled to 1.5 seconds.
-- Python startup and yt-dlp work run on Dispatchers.IO, not the UI thread.
+- Python startup and yt-dlp work run on Dispatchers.IO, not the UI thread; app startup no longer eagerly starts Chaquopy.
