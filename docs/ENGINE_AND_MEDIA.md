@@ -28,7 +28,7 @@ The Python bridge returns normalized media, format, playlist, and subtitle data 
 
 ## Current Phase One limitations
 
-- Android FFmpeg integration is not bundled yet. Default video presets therefore prefer single-file MP4 streams and avoid requiring a separate video/audio merge. Selecting a video-only format or requesting MP3 conversion may still fail on sources which require FFmpeg; the next media-processing task is to bundle a compatible Android FFmpeg binary or route compatible MP4 tracks through MediaMuxer.
+- A native MediaMuxer path now supports remuxing separate compatible video/audio tracks into MP4 and extracting an existing audio track into M4A without transcoding. It interleaves samples by presentation timestamp, sizes buffers from track metadata, and removes partial output after failures. It does not transcode codecs or create MP3 files; unsupported codecs/containers still require a future conversion backend. The current default yt-dlp presets continue to prefer single-file streams.
 - Pause currently interrupts yt-dlp and relies on yt-dlp partial-file continuation when the task is resumed. It is not yet a fully checkpointed pause protocol.
 - The standalone engine updater still manages its existing downloaded executable package; it does not replace the embedded Python package in this phase.
 - Runtime network extraction and device performance still need CI and real-device validation. A successful source change is not evidence that every supported site works.
