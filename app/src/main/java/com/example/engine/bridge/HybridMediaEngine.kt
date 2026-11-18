@@ -19,9 +19,9 @@ class HybridMediaEngine(context: Context) : EngineBridge {
     private val ytdlp = PythonYtDlpEngine(context)
 
     override suspend fun initializeEngine(): Boolean {
-        val nativeReady = native.initializeEngine()
-        val pythonReady = ytdlp.initializeEngine()
-        return nativeReady && pythonReady
+        // Prepare only the lightweight native paths during app startup.
+        // Chaquopy starts on the first website extraction/download, never on the home screen.
+        return native.initializeEngine()
     }
 
     override fun getEngineVersion(): String = ytdlp.getEngineVersion()
