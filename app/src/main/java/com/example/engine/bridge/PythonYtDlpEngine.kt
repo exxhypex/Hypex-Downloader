@@ -21,22 +21,41 @@ import java.io.File
  * All Python entry points are invoked on Dispatchers.IO.
  */
 class PythonYtDlpEngine(private val context: Context) : EngineBridge {
+    @Volatile private var initialized = false
+
     private val bridge: PyObject
         get() = Python.getInstance().getModule("downloader.android_bridge")
 
-    override suspend fun initializeEngine(): Boolean = withContext(Dispatchers.IO) {
+    private fun ensureInitialized() {
         if (!Python.isStarted()) {
             Python.start(com.chaquo.python.android.AndroidPlatform(context))
         }
-        bridge.callAttr("initialize", context.filesDir.absolutePath).toBoolean()
+        if (!initialized) {
+            synchronized(this) {
+                if (!initialized) {
+                    check(bridge.callAttr("initialize", context.filesDir.absolutePath).toBoolean()) {
+                        "Unable to initialize the embedded yt-dlp engine"
+                    }
+                    initialized = true
+                }
+            }
+        }
     }
 
-    override fun getEngineVersion(): String = runCatching {
-        bridge.callAttr("get_version").toString()
-    }.getOrDefault("Unavailable")
+    override suspend fun initializeEngine(): Boolean = withContext(Dispatchers.IO) {
+        ensureInitialized()
+        initialized
+    }
+
+    override fun getEngineVersion(): String = if (!Python.isStarted() || !initialized) {
+        "Embedded (lazy initialization)"
+    } else {
+        runCatching { bridge.callAttr("get_version").toString() }.getOrDefault("Unavailable")
+    }
 
     override suspend fun extractMedia(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         runCatching {
+            ensureInitialized()
             val response = JSONObject(bridge.callAttr("extract_info", url).toString())
             require(response.optBoolean("success")) {
                 response.optJSONObject("error")?.optString("message")
@@ -63,6 +82,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
 
     override suspend fun extractPlaylist(url: String): Result<PlaylistInfo> = withContext(Dispatchers.IO) {
         runCatching {
+            ensureInitialized()
             val response = JSONObject(bridge.callAttr("extract_playlist", url).toString())
             require(response.optBoolean("success")) {
                 response.optJSONObject("error")?.optString("message")
@@ -82,6 +102,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
         onProgress: (DownloadProgress) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
+            ensureInitialized()
             val outputDir = File(context.filesDir, "downloads").apply { mkdirs() }
             val template = File(outputDir, "${task.id}_%(title).80s.%(ext)s").absolutePath
             val callback = object {
@@ -128,17 +149,26 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
     }
 
     override fun pauseDownload(taskId: Long) {
-        runCatching { bridge.callAttr("cancel_task", taskId.toString()) }
+        if (Python.isStarted() && initialized) {
+            runCatching { bridge.callAttr("cancel_task", taskId.toString()) }
+        }
     }
 
     override fun cancelDownload(taskId: Long) {
-        runCatching { bridge.callAttr("cancel_task", taskId.toString()) }
+        if (Python.isStarted() && initialized) {
+            runCatching { bridge.callAttr("cancel_task", taskId.toString()) }
+        }
     }
 
-    override fun getEngineDiagnostics(): Map<String, String> = runCatching {
-        val json = JSONObject(bridge.callAttr("get_diagnostics").toString())
-        json.keys().asSequence().associateWith { json.optString(it) }
-    }.getOrDefault(mapOf("yt-dlp Runtime" to "Not initialized"))
+    override fun getEngineDiagnostics(): Map<String, String> {
+        if (!Python.isStarted() || !initialized) {
+            return mapOf("yt-dlp Runtime" to "Not started (lazy)")
+        }
+        return runCatching {
+            val json = JSONObject(bridge.callAttr("get_diagnostics").toString())
+            json.keys().asSequence().associateWith { json.optString(it) }
+        }.getOrDefault(mapOf("yt-dlp Runtime" to "Initialization error"))
+    }
 
     private fun parseMedia(data: JSONObject, originalUrl: String): MediaMetadata {
         val formats = data.optJSONArray("formats").toFormatItems()
