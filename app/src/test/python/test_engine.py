@@ -27,7 +27,7 @@ class TestHypexEngine(unittest.TestCase):
         self.assertFalse(controller.is_cancelled("task_123"))
 
     def test_format_selector_generation(self):
-        self.assertEqual(FormatManager.build_format_selector("Best Quality"), "bestvideo+bestaudio/best")
+        self.assertEqual(FormatManager.build_format_selector("Best Quality"), "best[ext=mp4]/best")
         self.assertIn("1080", FormatManager.build_format_selector("1080p MP4"))
         self.assertIn("720", FormatManager.build_format_selector("720p Balanced"))
         self.assertIn("480", FormatManager.build_format_selector("Data Saver"))
