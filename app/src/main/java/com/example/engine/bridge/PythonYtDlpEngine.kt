@@ -21,6 +21,29 @@ import java.util.concurrent.ConcurrentHashMap
  * Runs the bundled yt-dlp package through Chaquopy.
  * All Python entry points are invoked on Dispatchers.IO.
  */
+class YtDlpProgressCallback(
+    private val taskId: Long,
+    private val onProgress: (DownloadProgress) -> Unit
+) {
+    fun emitProgress(payload: String) {
+        runCatching {
+            val json = JSONObject(payload)
+            onProgress(
+                DownloadProgress(
+                    taskId = taskId,
+                    status = json.optString("status", "DOWNLOADING").uppercase(),
+                    progress = json.optDouble("progress", 0.0).toFloat().coerceIn(0f, 100f),
+                    downloadedBytes = json.optLong("downloaded_bytes"),
+                    totalBytes = json.optLong("total_bytes"),
+                    speed = json.optDouble("speed").toLong(),
+                    eta = json.optLong("eta"),
+                    filename = json.optString("filename")
+                )
+            )
+        }
+    }
+}
+
 class PythonYtDlpEngine(private val context: Context) : EngineBridge {
     @Volatile private var initialized = false
     private val playlistCache = ConcurrentHashMap<String, PlaylistInfo>()
@@ -109,26 +132,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
             ensureInitialized()
             val outputDir = File(context.filesDir, "downloads").apply { mkdirs() }
             val template = File(outputDir, "${task.id}_%(title).80s.%(ext)s").absolutePath
-            val callback = object {
-                @Suppress("unused")
-                fun emitProgress(payload: String) {
-                    runCatching {
-                        val json = JSONObject(payload)
-                        onProgress(
-                            DownloadProgress(
-                                taskId = task.id,
-                                status = json.optString("status", "DOWNLOADING").uppercase(),
-                                progress = json.optDouble("progress", 0.0).toFloat().coerceIn(0f, 100f),
-                                downloadedBytes = json.optLong("downloaded_bytes"),
-                                totalBytes = json.optLong("total_bytes"),
-                                speed = json.optDouble("speed").toLong(),
-                                eta = json.optLong("eta"),
-                                filename = json.optString("filename")
-                            )
-                        )
-                    }
-                }
-            }
+            val callback = YtDlpProgressCallback(task.id, onProgress)
             val response = JSONObject(
                 bridge.callAttr(
                     "download_media",
