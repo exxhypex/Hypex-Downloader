@@ -40,7 +40,7 @@ Every subsystem and internal logic flow is documented separately for clarity:
 
 ## Phase One Status
 
-Phase One adds the real embedded yt-dlp runtime and hybrid engine routing, removes website downloads from the old sample-stream path, enables TLS certificate verification, bounds format lists, and reduces progress-driven UI work. Android FFmpeg packaging, full pause checkpoints, and real-device performance validation remain follow-up work; see [Engine and Media Logic](docs/ENGINE_AND_MEDIA.md).
+Phase One adds the real embedded yt-dlp runtime and hybrid engine routing, removes website downloads from the old sample-stream path, enables TLS certificate verification, bounds format lists, and reduces progress-driven UI work. The media pipeline now includes native MP4 remuxing and lazy LGPL FFmpeg audio conversion for MP3 output. Full video transcoding, complete pause checkpoints, and real-device performance validation remain follow-up work; see [Engine and Media Logic](docs/ENGINE_AND_MEDIA.md).
 
 ---
 
