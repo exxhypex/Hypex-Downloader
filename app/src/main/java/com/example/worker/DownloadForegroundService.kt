@@ -149,7 +149,12 @@ class DownloadForegroundService : Service() {
             } else {
                 val error = result.exceptionOrNull()
                 val message = error?.message ?: "Download failed"
-                if (!message.contains("CANCELLED") && !message.contains("PAUSED")) {
+                val latestStatus = repository.getDownloadById(taskId)?.status
+                if (latestStatus != DownloadStatus.PAUSED &&
+                    latestStatus != DownloadStatus.CANCELLED &&
+                    !message.contains("CANCELLED") &&
+                    !message.contains("PAUSED")
+                ) {
                     repository.markFailed(taskId, "DOWNLOAD_ERROR", message)
                     showFailedNotification(task.title, message)
                 }
