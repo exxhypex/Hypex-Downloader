@@ -15,6 +15,7 @@ from downloader.cookies import CookieManager
 from downloader.errors import classify_error, NetworkError, VideoUnavailableError
 from downloader.playlists import PlaylistExtractor
 from downloader.progress import ProgressHookHandler
+from downloader.engine import HypexEngine
 
 class TestHypexEngine(unittest.TestCase):
     def test_cancellation(self):
@@ -31,6 +32,13 @@ class TestHypexEngine(unittest.TestCase):
         self.assertIn("720", FormatManager.build_format_selector("720p Balanced"))
         self.assertIn("480", FormatManager.build_format_selector("Data Saver"))
         self.assertIn("bestaudio", FormatManager.build_format_selector("Audio MP3"))
+
+    def test_secure_yt_dlp_defaults(self):
+        engine = HypexEngine('/tmp/hypex_engine_test')
+        options = engine._build_options()
+        self.assertFalse(options['nocheckcertificate'])
+        self.assertFalse(options['ignoreerrors'])
+        self.assertEqual(options['concurrent_fragment_downloads'], 2)
 
     def test_error_classification(self):
         err1 = classify_error(Exception("Connection timed out after 30000ms"))
@@ -63,6 +71,14 @@ class TestHypexEngine(unittest.TestCase):
         self.assertEqual(parsed["playlist_id"], "PL123")
         self.assertEqual(parsed["video_count"], 2)
         self.assertEqual(parsed["items"][0]["video_id"], "v1")
+
+    def test_format_catalog_is_bounded(self):
+        raw = [
+            {"format_id": str(i), "ext": "mp4", "vcodec": "avc1", "acodec": "mp4a",
+             "height": i, "tbr": float(i)}
+            for i in range(100)
+        ]
+        self.assertLessEqual(len(FormatManager.parse_formats(raw)), FormatManager.MAX_VISIBLE_FORMATS)
 
 if __name__ == '__main__':
     unittest.main()
