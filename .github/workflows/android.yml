@@ -101,6 +101,14 @@ jobs:
           path: app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: ignore
 
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hypex-unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+
       - name: Run Android Lint
         run: ./gradlew :app:lintDebug --no-daemon --stacktrace
 
