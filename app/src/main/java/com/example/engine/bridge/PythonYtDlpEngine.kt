@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Runs the bundled yt-dlp package through Chaquopy.
@@ -22,6 +23,7 @@ import java.io.File
  */
 class PythonYtDlpEngine(private val context: Context) : EngineBridge {
     @Volatile private var initialized = false
+    private val playlistCache = ConcurrentHashMap<String, PlaylistInfo>()
 
     private val bridge: PyObject
         get() = Python.getInstance().getModule("downloader.android_bridge")
@@ -64,6 +66,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
             val data = response.getJSONObject("data")
             if (data.optBoolean("is_playlist")) {
                 val playlist = parsePlaylist(data.getJSONObject("playlist"))
+                playlistCache[url] = playlist
                 MediaMetadata(
                     id = playlist.playlistId,
                     title = playlist.title,
@@ -81,6 +84,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
     }
 
     override suspend fun extractPlaylist(url: String): Result<PlaylistInfo> = withContext(Dispatchers.IO) {
+        playlistCache.remove(url)?.let { return@withContext Result.success(it) }
         runCatching {
             ensureInitialized()
             val response = JSONObject(bridge.callAttr("extract_playlist", url).toString())
