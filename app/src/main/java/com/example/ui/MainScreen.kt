@@ -1,14 +1,9 @@
 package com.example.ui
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
@@ -56,22 +51,14 @@ enum class AppDestination(val title: String) {
 }
 
 @Composable
-fun MainScreen(
-    viewModel: HypexViewModel,
-    modifier: Modifier = Modifier
-) {
+fun MainScreen(viewModel: HypexViewModel, modifier: Modifier = Modifier) {
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val extractedMedia by viewModel.extractedMedia.collectAsStateWithLifecycle()
-
     val activeDownloadsCount = downloads.count { it.status == DownloadStatus.DOWNLOADING }
 
-    // When media is extracted, show extraction bottom sheet
     if (extractedMedia != null) {
-        ExtractionBottomSheet(
-            viewModel = viewModel,
-            onDismiss = { viewModel.dismissExtraction() }
-        )
+        ExtractionBottomSheet(viewModel = viewModel, onDismiss = { viewModel.dismissExtraction() })
     }
 
     Scaffold(
@@ -81,11 +68,11 @@ fun MainScreen(
             NavigationBar(
                 modifier = Modifier
                     .navigationBarsPadding()
-                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                     .border(
                         1.dp,
                         SurfaceCardBorder,
-                        RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+                        androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
                     ),
                 containerColor = SurfaceDark,
                 contentColor = TextSecondary
@@ -95,97 +82,65 @@ fun MainScreen(
                     onClick = { currentDestination = AppDestination.HOME },
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home", fontSize = 11.sp, fontWeight = FontWeight.Medium) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Black,
-                        selectedTextColor = NeonCyan,
-                        indicatorColor = NeonCyan,
-                        unselectedIconColor = TextMuted,
-                        unselectedTextColor = TextMuted
-                    ),
+                    colors = navColors(),
                     modifier = Modifier.testTag("nav_home")
                 )
-
                 NavigationBarItem(
                     selected = currentDestination == AppDestination.DOWNLOADS,
                     onClick = { currentDestination = AppDestination.DOWNLOADS },
                     icon = {
-                        BadgedBox(
-                            badge = {
-                                if (activeDownloadsCount > 0) {
-                                    Badge(
-                                        containerColor = NeonCyan,
-                                        contentColor = Color.Black
-                                    ) {
-                                        Text("$activeDownloadsCount")
-                                    }
+                        BadgedBox(badge = {
+                            if (activeDownloadsCount > 0) {
+                                Badge(containerColor = NeonCyan, contentColor = Color.Black) {
+                                    Text("$activeDownloadsCount")
                                 }
                             }
-                        ) {
+                        }) {
                             Icon(Icons.Default.Download, contentDescription = "Downloads")
                         }
                     },
                     label = { Text("Downloads", fontSize = 11.sp, fontWeight = FontWeight.Medium) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Black,
-                        selectedTextColor = NeonCyan,
-                        indicatorColor = NeonCyan,
-                        unselectedIconColor = TextMuted,
-                        unselectedTextColor = TextMuted
-                    ),
+                    colors = navColors(),
                     modifier = Modifier.testTag("nav_downloads")
                 )
-
                 NavigationBarItem(
                     selected = currentDestination == AppDestination.PLAYLISTS,
                     onClick = { currentDestination = AppDestination.PLAYLISTS },
                     icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = "Playlists") },
                     label = { Text("Playlists", fontSize = 11.sp, fontWeight = FontWeight.Medium) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Black,
-                        selectedTextColor = NeonCyan,
-                        indicatorColor = NeonCyan,
-                        unselectedIconColor = TextMuted,
-                        unselectedTextColor = TextMuted
-                    ),
+                    colors = navColors(),
                     modifier = Modifier.testTag("nav_playlists")
                 )
-
                 NavigationBarItem(
                     selected = currentDestination == AppDestination.SETTINGS,
                     onClick = { currentDestination = AppDestination.SETTINGS },
                     icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
                     label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Medium) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.Black,
-                        selectedTextColor = NeonCyan,
-                        indicatorColor = NeonCyan,
-                        unselectedIconColor = TextMuted,
-                        unselectedTextColor = TextMuted
-                    ),
+                    colors = navColors(),
                     modifier = Modifier.testTag("nav_settings")
                 )
             }
         }
     ) { innerPadding ->
-        Crossfade(
-            targetState = currentDestination,
-            modifier = Modifier.padding(innerPadding)
-        ) { destination ->
-            when (destination) {
+        androidx.compose.runtime.key(currentDestination) {
+            when (currentDestination) {
                 AppDestination.HOME -> HomeScreen(
                     viewModel = viewModel,
                     onNavigateToDownloads = { currentDestination = AppDestination.DOWNLOADS }
                 )
-                AppDestination.DOWNLOADS -> DownloadsScreen(
-                    viewModel = viewModel
-                )
-                AppDestination.PLAYLISTS -> PlaylistsScreen(
-                    viewModel = viewModel
-                )
-                AppDestination.SETTINGS -> SettingsScreen(
-                    viewModel = viewModel
-                )
+                AppDestination.DOWNLOADS -> DownloadsScreen(viewModel = viewModel)
+                AppDestination.PLAYLISTS -> PlaylistsScreen(viewModel = viewModel)
+                AppDestination.SETTINGS -> SettingsScreen(viewModel = viewModel)
             }
         }
     }
 }
+
+@Composable
+private fun navColors() = NavigationBarItemDefaults.colors(
+    selectedIconColor = Color.Black,
+    selectedTextColor = NeonCyan,
+    indicatorColor = NeonCyan,
+    unselectedIconColor = TextMuted,
+    unselectedTextColor = TextMuted
+)
