@@ -87,10 +87,10 @@ class HypexViewModel(application: Application) : AndroidViewModel(application) {
 
     // Built-in presets
     val defaultPresets = listOf(
-        PresetItem("best", "Best Quality", "bestvideo+bestaudio/best", "mp4", false, "Highest resolution available"),
-        PresetItem("1080p", "1080p MP4", "bestvideo[height<=1080]+bestaudio/best", "mp4", false, "Full HD video & audio"),
-        PresetItem("720p", "720p Balanced", "bestvideo[height<=720]+bestaudio/best", "mp4", false, "Fast download HD"),
-        PresetItem("480p", "Data Saver", "bestvideo[height<=480]+bestaudio/best", "mp4", false, "Lowest mobile data"),
+        PresetItem("best", "Best Quality", "best[ext=mp4]/best", "mp4", false, "Highest single-file MP4 stream available"),
+        PresetItem("1080p", "1080p MP4", "best[height<=1080][ext=mp4]/best[height<=1080]/best", "mp4", false, "Full HD when a single-file stream is available"),
+        PresetItem("720p", "720p Balanced", "best[height<=720][ext=mp4]/best[height<=720]/best", "mp4", false, "Balanced single-file stream"),
+        PresetItem("480p", "Data Saver", "best[height<=480][ext=mp4]/best[height<=480]/best", "mp4", false, "Lower data usage"),
         PresetItem("mp3", "Audio MP3", "bestaudio/best", "mp3", true, "Universal audio file"),
         PresetItem("m4a", "Audio M4A", "bestaudio[ext=m4a]/bestaudio/best", "m4a", true, "High fidelity AAC audio")
     )
@@ -128,7 +128,7 @@ class HypexViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     _extractedMedia.value = media
                     // Default to first video or best format
-                    _selectedFormat.value = media.formats.firstOrNull { !it.isAudioOnly } ?: media.formats.firstOrNull()
+                    _selectedFormat.value = media.formats.firstOrNull { it.isMuxed } ?: media.formats.firstOrNull { !it.isAudioOnly } ?: media.formats.firstOrNull()
                 }
             } else {
                 _errorMessage.value = result.exceptionOrNull()?.message ?: "Extraction failed. Check the URL."
