@@ -8,11 +8,11 @@ import threading
 from typing import Dict, Any, Optional, Callable
 
 from .extractor import MediaExtractor
-from .formats import FormatManager
 from .cancellation import CancellationController
 from .progress import ProgressHookHandler
 from .cookies import CookieManager
 from .errors import classify_error, DownloadCancelledError
+
 
 class HypexEngine:
     _instance = None
@@ -28,12 +28,13 @@ class HypexEngine:
     def __init__(self, storage_dir: str = "/data/data/com.hypex.downloader/files"):
         if getattr(self, "_initialized", False):
             return
-        
+
         self.storage_dir = storage_dir
+        os.makedirs(storage_dir, exist_ok=True)
         self.cookie_manager = CookieManager(storage_dir)
         self.cancellation = CancellationController()
         self._ydl_module = None
-        self._version = "2026.03.01"
+        self._version = "unavailable"
         self._initialized = True
 
     def _get_ydl_class(self):
@@ -53,7 +54,7 @@ class HypexEngine:
     def get_diagnostics(self) -> Dict[str, Any]:
         ydl = self._get_ydl_class()
         return {
-            "engine_name": "HYPEX yt-dlp Native Engine",
+            "engine_name": "HYPEX embedded yt-dlp",
             "version": self.get_version(),
             "ydl_available": ydl is not None,
             "cookies_loaded": self.cookie_manager.has_cookies(),
@@ -64,7 +65,7 @@ class HypexEngine:
     def _build_options(
         self,
         task_id: Optional[str] = None,
-        format_selector: str = "bestvideo+bestaudio/best",
+        format_selector: str = "best[ext=mp4]/best",
         output_template: Optional[str] = None,
         progress_callback: Optional[Callable[[dict], None]] = None,
         is_extract_only: bool = False
@@ -73,14 +74,20 @@ class HypexEngine:
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
-            "ignoreerrors": True,
+            "ignoreerrors": False,
             "continuedl": True,
-            "nocheckcertificate": True,
+            "nocheckcertificate": False,
+            "socket_timeout": 30,
+            "retries": 3,
+            "fragment_retries": 3,
+            "extractor_retries": 2,
+            "concurrent_fragment_downloads": 2,
             "format": format_selector,
         }
 
-        if self.cookie_manager.has_cookies():
-            options["cookiefile"] = self.cookie_manager.get_cookie_file_path()
+        cookie_path = self.cookie_manager.get_cookie_file_path()
+        if cookie_path:
+            options["cookiefile"] = cookie_path
 
         if is_extract_only:
             options["extract_flat"] = "in_playlist"
@@ -97,17 +104,16 @@ class HypexEngine:
         return options
 
     def extract_info(self, url: str) -> str:
-        """
-        Extract media info and return as structured JSON string
-        """
         try:
             ydl_class = self._get_ydl_class()
             if ydl_class is None:
-                raise Exception("yt-dlp runtime is not initialized")
+                raise RuntimeError("Bundled yt-dlp runtime is unavailable")
 
             options = self._build_options(is_extract_only=True)
             with ydl_class(options) as ydl:
                 info = ydl.extract_info(url, download=False)
+                if info is None:
+                    raise RuntimeError("No media information was returned by yt-dlp")
                 parsed = MediaExtractor.parse_media_info(info)
                 return json.dumps({"success": True, "data": parsed})
         except Exception as e:
@@ -122,18 +128,15 @@ class HypexEngine:
         output_template: str,
         progress_callback: Optional[Callable[[dict], None]] = None
     ) -> str:
-        """
-        Download media with live progress hook and cancellation support
-        """
         try:
             self.cancellation.clear(task_id)
             ydl_class = self._get_ydl_class()
             if ydl_class is None:
-                raise Exception("yt-dlp runtime is not initialized")
+                raise RuntimeError("Bundled yt-dlp runtime is unavailable")
 
             options = self._build_options(
                 task_id=task_id,
-                format_selector=format_selector,
+                format_selector=format_selector or "best[ext=mp4]/best",
                 output_template=output_template,
                 progress_callback=progress_callback,
                 is_extract_only=False
@@ -141,7 +144,9 @@ class HypexEngine:
 
             with ydl_class(options) as ydl:
                 info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info) if info else ""
+                if info is None:
+                    raise RuntimeError("yt-dlp completed without returning media metadata")
+                filename = info.get("filepath") or info.get("_filename") or ydl.prepare_filename(info)
                 return json.dumps({
                     "success": True,
                     "task_id": task_id,
