@@ -190,7 +190,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
             webpageUrl = data.optString("webpage_url").ifBlank { originalUrl },
             description = data.optString("description"),
             viewCount = if (data.isNull("view_count")) null else data.optLong("view_count"),
-            uploadDate = data.optString("upload_date").ifBlank { null },
+            uploadDate = data.optString("upload_date").takeIf { it.isNotBlank() },
             formats = formats,
             subtitles = subtitles
         )
