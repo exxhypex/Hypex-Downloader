@@ -5,8 +5,14 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -17,6 +23,7 @@ import java.nio.ByteBuffer
  * therefore requires codecs accepted by the device's MediaMuxer implementation.
  */
 class MediaProcessor {
+    private val activeFfmpegSessions = ConcurrentHashMap<Long, Long>()
     companion object {
         private const val TAG = "MediaProcessor"
         private const val DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024
