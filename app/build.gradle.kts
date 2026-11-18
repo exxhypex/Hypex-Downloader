@@ -115,6 +115,8 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  // LGPL audio-only FFmpeg build: MP3/Opus/Vorbis conversion without the full video codec bundle.
+  implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
