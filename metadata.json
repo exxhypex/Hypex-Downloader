@@ -1,0 +1,6 @@
+{
+  "name": "HYPEX Downloader",
+  "description": "High-performance native media downloader with yt-dlp format extraction, persistent queue management, and AMOLED interface.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
