@@ -16,6 +16,7 @@ import com.example.core.model.PlaylistItem
 import com.example.core.model.SubtitleItem
 import com.example.engine.bridge.EngineBridge
 import com.example.engine.ffmpeg.MediaProcessor
+import com.example.engine.updates.EngineUpdater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -40,12 +41,12 @@ class NativeMediaEngine(
 
     companion object {
         private const val TAG = "NativeMediaEngine"
-        private const val ENGINE_VERSION = "2026.03.01"
     }
 
     private val pausedTasks = ConcurrentHashMap.newKeySet<Long>()
     private val cancelledTasks = ConcurrentHashMap.newKeySet<Long>()
     private val mediaProcessor = MediaProcessor()
+    private val engineUpdater by lazy { EngineUpdater(context, client) }
 
     override suspend fun initializeEngine(): Boolean = withContext(Dispatchers.IO) {
         // Ensure private directories exist
@@ -56,7 +57,7 @@ class NativeMediaEngine(
         true
     }
 
-    override fun getEngineVersion(): String = ENGINE_VERSION
+    override fun getEngineVersion(): String = engineUpdater.getInstalledState().version
 
     override suspend fun extractMedia(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         try {
@@ -336,10 +337,14 @@ class NativeMediaEngine(
         val runtime = Runtime.getRuntime()
         val usedMemory = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
         val maxMemory = runtime.maxMemory() / (1024 * 1024)
+        val state = engineUpdater.getInstalledState()
 
         return mapOf(
             "Engine Architecture" to "Clean Kotlin + Embedded Python yt-dlp Core",
-            "yt-dlp Core Version" to ENGINE_VERSION,
+            "yt-dlp Core Version" to state.version,
+            "Update Channel" to state.channel.displayName,
+            "Package Source" to if (state.isBundled) "Bundled Baseline" else "In-App Verified (${state.sha256.take(10)}…)",
+            "Rollback Snapshot" to (state.backupVersion ?: "None"),
             "Engine Status" to "Active & Initialized",
             "JVM Memory" to "${usedMemory}MB / ${maxMemory}MB",
             "Hardware Acceleration" to "Android MediaCodec / MediaMuxer (ARM64 & x86)",

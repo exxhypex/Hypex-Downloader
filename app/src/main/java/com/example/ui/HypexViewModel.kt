@@ -17,6 +17,9 @@ import com.example.core.model.PresetItem
 import com.example.data.repository.DownloadRepository
 import com.example.engine.updates.EngineUpdateInfo
 import com.example.engine.updates.EngineUpdater
+import com.example.engine.updates.InstalledEngineState
+import com.example.engine.updates.UpdateChannel
+import com.example.engine.updates.UpdateInstallState
 import com.example.worker.DownloadForegroundService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,7 +32,7 @@ import java.io.File
 class HypexViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = DownloadRepository(application)
-    private val updater = EngineUpdater()
+    private val updater = EngineUpdater(application)
 
     val downloads: StateFlow<List<DownloadTask>> = repository.allDownloads
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -63,6 +66,15 @@ class HypexViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _engineDiagnostics = MutableStateFlow<Map<String, String>>(emptyMap())
     val engineDiagnostics: StateFlow<Map<String, String>> = _engineDiagnostics.asStateFlow()
+
+    private val _selectedUpdateChannel = MutableStateFlow(updater.getPreferredChannel())
+    val selectedUpdateChannel: StateFlow<UpdateChannel> = _selectedUpdateChannel.asStateFlow()
+
+    private val _installedEngineState = MutableStateFlow(updater.getInstalledState())
+    val installedEngineState: StateFlow<InstalledEngineState> = _installedEngineState.asStateFlow()
+
+    private val _updateInstallState = MutableStateFlow<UpdateInstallState>(UpdateInstallState.Idle)
+    val updateInstallState: StateFlow<UpdateInstallState> = _updateInstallState.asStateFlow()
 
     private val _engineUpdate = MutableStateFlow<EngineUpdateInfo?>(null)
     val engineUpdate: StateFlow<EngineUpdateInfo?> = _engineUpdate.asStateFlow()
@@ -265,15 +277,102 @@ class HypexViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun checkForUpdates() {
+    fun selectUpdateChannel(channel: UpdateChannel) {
+        if (_selectedUpdateChannel.value == channel && _engineUpdate.value != null) return
+        updater.setPreferredChannel(channel)
+        _selectedUpdateChannel.value = channel
+        _engineUpdate.value = null
+        _updateInstallState.value = UpdateInstallState.Idle
+        checkForUpdates(channel)
+    }
+
+    fun checkForUpdates(channel: UpdateChannel = _selectedUpdateChannel.value) {
         viewModelScope.launch {
             _isCheckingUpdate.value = true
-            val res = updater.checkForUpdates(repository.engineBridge.getEngineVersion())
+            _updateInstallState.value = UpdateInstallState.Checking(channel)
+            val res = updater.checkForUpdates(channel)
             _isCheckingUpdate.value = false
             if (res.isSuccess) {
                 _engineUpdate.value = res.getOrThrow()
+                _updateInstallState.value = UpdateInstallState.Idle
             } else {
-                Toast.makeText(getApplication(), "Could not check updates: ${res.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                val msg = res.exceptionOrNull()?.message ?: "Failed to check ${channel.displayName} channel"
+                _updateInstallState.value = UpdateInstallState.Error(msg)
+                Toast.makeText(getApplication(), "Update check failed: $msg", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun installEngineUpdate() {
+        val info = _engineUpdate.value ?: return
+        viewModelScope.launch {
+            val res = updater.downloadAndInstallUpdate(info) { state ->
+                _updateInstallState.value = state
+            }
+            if (res.isSuccess) {
+                val newState = res.getOrThrow()
+                _installedEngineState.value = newState
+                _selectedUpdateChannel.value = newState.channel
+                _engineUpdate.value = info.copy(
+                    currentVersion = newState.version,
+                    hasUpdate = false,
+                    isChannelSwitch = false
+                )
+                loadDiagnostics()
+                Toast.makeText(
+                    getApplication(),
+                    "Updated yt-dlp to ${newState.version} (${newState.channel.displayName})",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                val errMsg = res.exceptionOrNull()?.message ?: "Install failed"
+                Toast.makeText(getApplication(), errMsg, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    fun rollbackEngineUpdate() {
+        viewModelScope.launch {
+            val res = updater.rollback()
+            if (res.isSuccess) {
+                val restored = res.getOrThrow()
+                _installedEngineState.value = restored
+                _selectedUpdateChannel.value = restored.channel
+                _engineUpdate.value = null
+                _updateInstallState.value = UpdateInstallState.Success(
+                    restored,
+                    "Rolled back to yt-dlp ${restored.version} (${restored.channel.displayName})"
+                )
+                loadDiagnostics()
+                Toast.makeText(
+                    getApplication(),
+                    "Rolled back to ${restored.version}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                Toast.makeText(
+                    getApplication(),
+                    res.exceptionOrNull()?.message ?: "Rollback unavailable",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    fun resetEngineToBundled() {
+        viewModelScope.launch {
+            val res = updater.resetToBundled()
+            if (res.isSuccess) {
+                val bundled = res.getOrThrow()
+                _installedEngineState.value = bundled
+                _selectedUpdateChannel.value = bundled.channel
+                _engineUpdate.value = null
+                _updateInstallState.value = UpdateInstallState.Success(
+                    bundled,
+                    "Restored bundled yt-dlp ${bundled.version}"
+                )
+                loadDiagnostics()
+                Toast.makeText(getApplication(), "Restored bundled yt-dlp ${bundled.version}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -300,7 +399,7 @@ class HypexViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val uri = Uri.fromFile(file)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             val ext = file.extension.lowercase()
             val mime = when (ext) {
                 "mp4", "mkv", "webm" -> "video/*"
@@ -326,7 +425,7 @@ class HypexViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
-            val uri = Uri.fromFile(file)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "video/*"
                 putExtra(Intent.EXTRA_STREAM, uri)

@@ -90,7 +90,7 @@ class MediaProcessor {
                     break
                 }
                 bufferInfo.presentationTimeUs = videoExtractor.sampleTime
-                bufferInfo.flags = videoExtractor.sampleFlags
+                bufferInfo.flags = mapSampleFlagsToBufferFlags(videoExtractor.sampleFlags)
                 muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo)
                 videoExtractor.advance()
             }
@@ -106,7 +106,7 @@ class MediaProcessor {
                         break
                     }
                     bufferInfo.presentationTimeUs = audioExtractor.sampleTime
-                    bufferInfo.flags = audioExtractor.sampleFlags
+                    bufferInfo.flags = mapSampleFlagsToBufferFlags(audioExtractor.sampleFlags)
                     muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
                     audioExtractor.advance()
                 }
@@ -168,7 +168,7 @@ class MediaProcessor {
                 bufferInfo.size = extractor.readSampleData(buffer, 0)
                 if (bufferInfo.size < 0) break
                 bufferInfo.presentationTimeUs = extractor.sampleTime
-                bufferInfo.flags = extractor.sampleFlags
+                bufferInfo.flags = mapSampleFlagsToBufferFlags(extractor.sampleFlags)
                 muxer.writeSampleData(muxerTrack, buffer, bufferInfo)
                 extractor.advance()
             }
@@ -184,5 +184,16 @@ class MediaProcessor {
             } catch (ignored: Exception) {}
             try { extractor?.release() } catch (ignored: Exception) {}
         }
+    }
+
+    private fun mapSampleFlagsToBufferFlags(sampleFlags: Int): Int {
+        var bufferFlags = 0
+        if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+            bufferFlags = bufferFlags or MediaCodec.BUFFER_FLAG_KEY_FRAME
+        }
+        if ((sampleFlags and MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME) != 0) {
+            bufferFlags = bufferFlags or MediaCodec.BUFFER_FLAG_PARTIAL_FRAME
+        }
+        return bufferFlags
     }
 }

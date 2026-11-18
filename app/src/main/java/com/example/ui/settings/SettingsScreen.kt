@@ -21,25 +21,27 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Cookie
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -57,15 +59,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.engine.updates.UpdateChannel
+import com.example.engine.updates.UpdateInstallState
 import com.example.ui.HypexViewModel
 import com.example.ui.components.GlassCard
 import com.example.ui.components.StatusBadge
 import com.example.ui.cookies.CookieManagerDialog
+import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentGreen
+import com.example.ui.theme.AccentRed
 import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.SurfaceCard
@@ -83,6 +90,9 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val diagnostics by viewModel.engineDiagnostics.collectAsStateWithLifecycle()
+    val selectedChannel by viewModel.selectedUpdateChannel.collectAsStateWithLifecycle()
+    val installedState by viewModel.installedEngineState.collectAsStateWithLifecycle()
+    val installState by viewModel.updateInstallState.collectAsStateWithLifecycle()
     val updateInfo by viewModel.engineUpdate.collectAsStateWithLifecycle()
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
 
@@ -92,7 +102,6 @@ fun SettingsScreen(
     var showLicensesDialog by remember { mutableStateOf(false) }
 
     var wifiOnly by remember { mutableStateOf(false) }
-    var maxConcurrent by remember { mutableStateOf("1 Active (Safe)") }
 
     if (showCookieDialog) {
         CookieManagerDialog(viewModel = viewModel, onDismiss = { showCookieDialog = false })
@@ -197,8 +206,17 @@ fun SettingsScreen(
             )
         }
 
-        // Engine Status & Update Card
+        // Engine Status & Stable/Nightly Updater Card
         item {
+            val isInstalling = installState is UpdateInstallState.Downloading ||
+                installState is UpdateInstallState.Verifying ||
+                installState is UpdateInstallState.Installing
+            val activeBadgeColor = if (installedState.channel == UpdateChannel.NIGHTLY) {
+                ElectricViolet
+            } else {
+                AccentGreen
+            }
+
             GlassCard(borderColor = NeonCyan.copy(alpha = 0.4f)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -207,7 +225,12 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ElectricBolt, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(24.dp))
+                            Icon(
+                                Icons.Default.ElectricBolt,
+                                contentDescription = null,
+                                tint = NeonCyan,
+                                modifier = Modifier.size(24.dp)
+                            )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
@@ -217,20 +240,100 @@ fun SettingsScreen(
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = "Version: 2026.03.01 • Embedded ARM64",
+                                    text = "Version: ${installedState.version} • ${if (installedState.isBundled) "Bundled" else "SHA-256 Verified"}",
                                     fontSize = 12.sp,
                                     color = TextSecondary
                                 )
                             }
                         }
-                        StatusBadge(text = "STABLE", color = AccentGreen)
+                        StatusBadge(
+                            text = installedState.channel.displayName.uppercase(),
+                            color = activeBadgeColor
+                        )
+                    }
+
+                    if (!installedState.isBundled && installedState.sha256.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Security,
+                                contentDescription = null,
+                                tint = AccentGreen,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Package digest: ${installedState.sha256.take(16)}…",
+                                fontSize = 11.sp,
+                                color = TextMuted
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
+                    // Release Channel Switcher: Stable vs Nightly
+                    Text(
+                        text = "Release Channel",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        UpdateChannel.entries.forEach { channel ->
+                            val isSelected = selectedChannel == channel
+                            val accent = if (channel == UpdateChannel.NIGHTLY) ElectricViolet else NeonCyan
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) accent.copy(alpha = 0.18f) else SurfaceVariantDark,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isSelected) accent else SurfaceCardBorder
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable(enabled = !isCheckingUpdate && !isInstalling) {
+                                        viewModel.selectUpdateChannel(channel)
+                                    }
+                                    .testTag(
+                                        if (channel == UpdateChannel.STABLE) "channel_stable_button"
+                                        else "channel_nightly_button"
+                                    )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        text = channel.displayName,
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) accent else TextPrimary
+                                    )
+                                    Text(
+                                        text = if (channel == UpdateChannel.STABLE) "Official tested" else "Daily master",
+                                        fontSize = 11.sp,
+                                        color = TextMuted
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Button(
                         onClick = { viewModel.checkForUpdates() },
-                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isCheckingUpdate && !isInstalling,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("check_updates_button"),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = SurfaceVariantDark,
                             contentColor = NeonCyan
@@ -238,34 +341,289 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         if (isCheckingUpdate) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = NeonCyan, strokeWidth = 2.dp)
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = NeonCyan,
+                                strokeWidth = 2.dp
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Checking GitHub Releases...", fontSize = 13.sp)
+                            Text("Checking ${selectedChannel.displayName} releases...", fontSize = 13.sp)
                         } else {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Check for Engine Updates", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Check ${selectedChannel.displayName} Updates",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
 
-                    if (updateInfo != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
+                    // Install / Download Progress UI
+                    when (val state = installState) {
+                        is UpdateInstallState.Downloading -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(SurfaceVariantDark)
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Downloading ${selectedChannel.displayName} package...",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = NeonCyan
+                                    )
+                                    Text(
+                                        text = "${(state.progress * 100).toInt()}%",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NeonCyan
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { state.progress.coerceIn(0f, 1f) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
+                                    color = NeonCyan,
+                                    trackColor = SurfaceCard
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "${String.format("%.2f", state.downloadedBytes / (1024f * 1024f))} MB" +
+                                        if (state.totalBytes > 0) " / ${String.format("%.2f", state.totalBytes / (1024f * 1024f))} MB" else "",
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                        }
+                        is UpdateInstallState.Verifying -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(SurfaceVariantDark)
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = AccentGreen,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(state.step, fontSize = 12.sp, color = TextPrimary)
+                            }
+                        }
+                        is UpdateInstallState.Installing -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(SurfaceVariantDark)
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = NeonCyan,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Swapping active yt-dlp package...", fontSize = 12.sp, color = TextPrimary)
+                            }
+                        }
+                        is UpdateInstallState.Success -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(AccentGreen.copy(alpha = 0.15f))
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(state.message, fontSize = 12.sp, color = AccentGreen, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        is UpdateInstallState.Error -> {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(AccentRed.copy(alpha = 0.15f))
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = AccentRed, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(state.message, fontSize = 12.sp, color = AccentRed)
+                            }
+                        }
+                        else -> Unit
+                    }
+
+                    // Release Info & Install Action Card
+                    if (updateInfo != null && !isInstalling) {
+                        Spacer(modifier = Modifier.height(12.dp))
                         val upd = updateInfo!!
-                        Row(
+                        val accentColor = if (upd.channel == UpdateChannel.NIGHTLY) ElectricViolet else NeonCyan
+
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (upd.hasUpdate) NeonCyan.copy(alpha = 0.15f) else SurfaceVariantDark)
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (upd.hasUpdate) accentColor.copy(alpha = 0.12f)
+                                    else SurfaceVariantDark
+                                )
+                                .border(
+                                    1.dp,
+                                    if (upd.hasUpdate) accentColor.copy(alpha = 0.4f) else SurfaceCardBorder,
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .padding(12.dp)
                         ) {
-                            Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (upd.hasUpdate) "Update available: v${upd.latestVersion}" else "Latest engine already installed (${upd.currentVersion})",
-                                fontSize = 12.sp,
-                                color = TextPrimary
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.SystemUpdate,
+                                        contentDescription = null,
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = when {
+                                            upd.isChannelSwitch -> "Switch to ${upd.channel.displayName} ${upd.latestVersion}"
+                                            upd.hasUpdate -> "New ${upd.channel.displayName}: v${upd.latestVersion}"
+                                            else -> "Up to date (${upd.latestVersion})"
+                                        },
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary
+                                    )
+                                }
+                                if (upd.assetSizeBytes > 0) {
+                                    Text(
+                                        text = String.format("%.1f MB", upd.assetSizeBytes / (1024f * 1024f)),
+                                        fontSize = 11.sp,
+                                        color = TextMuted
+                                    )
+                                }
+                            }
+
+                            if (upd.releaseDate.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Released: ${upd.releaseDate} • Asset: ${upd.assetName.ifBlank { "yt-dlp" }}",
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+
+                            if (upd.releaseNotes.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = upd.releaseNotes,
+                                    fontSize = 11.sp,
+                                    color = TextSecondary,
+                                    maxLines = 4,
+                                    lineHeight = 15.sp
+                                )
+                            }
+
+                            if ((upd.hasUpdate || upd.isChannelSwitch) && upd.downloadUrl.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Button(
+                                    onClick = { viewModel.installEngineUpdate() },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("install_update_button"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = accentColor,
+                                        contentColor = if (upd.channel == UpdateChannel.NIGHTLY) Color.White else Color.Black
+                                    ),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (upd.isChannelSwitch) {
+                                            "Install ${upd.channel.displayName} Build"
+                                        } else {
+                                            "Download & Install Update"
+                                        },
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Rollback & Reset Controls
+                    if (installedState.canRollback || !installedState.isBundled) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (installedState.canRollback) {
+                                OutlinedButton(
+                                    onClick = { viewModel.rollbackEngineUpdate() },
+                                    enabled = !isInstalling,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("rollback_engine_button"),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Rollback (${installedState.backupVersion ?: "Prev"})",
+                                        fontSize = 12.sp,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            if (!installedState.isBundled) {
+                                OutlinedButton(
+                                    onClick = { viewModel.resetEngineToBundled() },
+                                    enabled = !isInstalling,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("reset_bundled_button"),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Bundled", fontSize = 12.sp, maxLines = 1)
+                                }
+                            }
                         }
                     }
                 }
