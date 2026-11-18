@@ -10,6 +10,7 @@ import com.example.core.model.MediaMetadata
 import com.example.core.model.PlaylistInfo
 import com.example.core.model.PlaylistItem
 import com.example.core.model.SubtitleItem
+import com.example.engine.ffmpeg.MediaProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -47,6 +48,7 @@ class YtDlpProgressCallback(
 class PythonYtDlpEngine(private val context: Context) : EngineBridge {
     @Volatile private var initialized = false
     private val playlistCache = ConcurrentHashMap<String, PlaylistInfo>()
+    private val mediaProcessor = MediaProcessor()
 
     private val bridge: PyObject
         get() = Python.getInstance().getModule("downloader.android_bridge")
@@ -148,11 +150,51 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
                     ?: "yt-dlp download failed"
             }
             val outputPath = response.optString("output_file")
-            val outputFile = File(outputPath)
-            require(outputPath.isNotBlank() && outputFile.exists()) {
+            val downloadedFile = File(outputPath)
+            require(outputPath.isNotBlank() && downloadedFile.exists()) {
                 "yt-dlp reported success but the output file was not found"
             }
-            outputFile
+
+            if (task.formatDescription.contains("MP3", ignoreCase = true) &&
+                !downloadedFile.extension.equals("mp3", ignoreCase = true)
+            ) {
+                onProgress(
+                    DownloadProgress(
+                        taskId = task.id,
+                        status = "PROCESSING",
+                        progress = 0f,
+                        downloadedBytes = downloadedFile.length(),
+                        totalBytes = downloadedFile.length(),
+                        speed = 0L,
+                        eta = 0L,
+                        filename = downloadedFile.absolutePath
+                    )
+                )
+                val mp3File = File(downloadedFile.parentFile, "${downloadedFile.nameWithoutExtension}.mp3")
+                val converted = mediaProcessor.convertAudioToMp3(
+                    inputFile = downloadedFile,
+                    outputFile = mp3File,
+                    taskId = task.id,
+                    bitrateKbps = 192
+                ) { fraction ->
+                    onProgress(
+                        DownloadProgress(
+                            taskId = task.id,
+                            status = "PROCESSING",
+                            progress = (fraction * 100f).coerceIn(0f, 100f),
+                            downloadedBytes = downloadedFile.length(),
+                            totalBytes = downloadedFile.length(),
+                            speed = 0L,
+                            eta = 0L,
+                            filename = mp3File.absolutePath
+                        )
+                    )
+                }.getOrThrow()
+                downloadedFile.delete()
+                converted
+            } else {
+                downloadedFile
+            }
         }
     }
 
@@ -163,6 +205,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
     }
 
     override fun cancelDownload(taskId: Long) {
+        mediaProcessor.cancelProcessing(taskId)
         if (Python.isStarted() && initialized) {
             runCatching { bridge.callAttr("cancel_task", taskId.toString()) }
         }
