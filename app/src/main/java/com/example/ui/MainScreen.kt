@@ -31,7 +31,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.core.model.DownloadStatus
 import com.example.ui.downloads.DownloadsScreen
 import com.example.ui.extraction.ExtractionBottomSheet
 import com.example.ui.home.HomeScreen
@@ -54,9 +53,8 @@ enum class AppDestination(val title: String) {
 @Composable
 fun MainScreen(viewModel: HypexViewModel, modifier: Modifier = Modifier) {
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
-    val downloads by viewModel.downloads.collectAsStateWithLifecycle()
+    val activeDownloadsCount by viewModel.activeDownloadsCount.collectAsStateWithLifecycle()
     val extractedMedia by viewModel.extractedMedia.collectAsStateWithLifecycle()
-    val activeDownloadsCount = downloads.count { it.status == DownloadStatus.DOWNLOADING }
 
     if (extractedMedia != null) {
         ExtractionBottomSheet(viewModel = viewModel, onDismiss = { viewModel.dismissExtraction() })
@@ -126,12 +124,12 @@ fun MainScreen(viewModel: HypexViewModel, modifier: Modifier = Modifier) {
         Box(modifier = Modifier.padding(innerPadding)) {
             androidx.compose.runtime.key(currentDestination) {
                 when (currentDestination) {
-                AppDestination.HOME -> HomeScreen(
-                    viewModel = viewModel,
-                    onNavigateToDownloads = { currentDestination = AppDestination.DOWNLOADS }
-                )
-                AppDestination.DOWNLOADS -> DownloadsScreen(viewModel = viewModel)
-                AppDestination.PLAYLISTS -> PlaylistsScreen(viewModel = viewModel)
+                    AppDestination.HOME -> HomeScreen(
+                        viewModel = viewModel,
+                        onNavigateToDownloads = { currentDestination = AppDestination.DOWNLOADS }
+                    )
+                    AppDestination.DOWNLOADS -> DownloadsScreen(viewModel = viewModel)
+                    AppDestination.PLAYLISTS -> PlaylistsScreen(viewModel = viewModel)
                     AppDestination.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }
