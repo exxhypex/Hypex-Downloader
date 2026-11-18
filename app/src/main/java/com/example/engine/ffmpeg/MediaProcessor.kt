@@ -5,20 +5,43 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.io.File
 import java.nio.ByteBuffer
 
+/**
+ * Native Android media remuxing.
+ *
+ * This copies already-encoded tracks; it does not transcode codecs. MP4 output
+ * therefore requires codecs accepted by the device's MediaMuxer implementation.
+ */
 class MediaProcessor {
+    private val activeFfmpegSessions = ConcurrentHashMap<Long, Long>()
     companion object {
         private const val TAG = "MediaProcessor"
-        private const val BUFFER_SIZE = 1024 * 1024 // 1MB buffer
+        private const val DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024
+        private const val MAX_BUFFER_SIZE = 32 * 1024 * 1024
+    }
+
+    private data class TrackCursor(
+        val extractor: MediaExtractor,
+        val muxerTrack: Int,
+        var hasSample: Boolean = true
+    ) {
+        val timeUs: Long
+            get() = if (hasSample) extractor.sampleTime else Long.MAX_VALUE
     }
 
     /**
-     * Merges separate video and audio files into a single MP4 container
-     * using Android's hardware/native MediaExtractor and MediaMuxer.
+     * Merge separate encoded video and audio files into an MP4 container.
+     * Tracks are written in presentation-time order to keep interleaving valid.
      */
     suspend fun mergeVideoAndAudio(
         videoFile: File,
@@ -29,106 +52,110 @@ class MediaProcessor {
         var videoExtractor: MediaExtractor? = null
         var audioExtractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        var success = false
 
         try {
+            require(videoFile.isFile && videoFile.length() > 0L) { "Video input is missing or empty" }
+            require(audioFile.isFile && audioFile.length() > 0L) { "Audio input is missing or empty" }
+            require(outputFile.extension.equals("mp4", ignoreCase = true)) {
+                "Native track muxing currently supports MP4 output only"
+            }
+
             videoExtractor = MediaExtractor().apply { setDataSource(videoFile.absolutePath) }
             audioExtractor = MediaExtractor().apply { setDataSource(audioFile.absolutePath) }
 
-            // Find video track
-            var videoTrackIndex = -1
-            var videoFormat: MediaFormat? = null
-            for (i in 0 until videoExtractor.trackCount) {
-                val format = videoExtractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("video/")) {
-                    videoTrackIndex = i
-                    videoFormat = format
-                    break
-                }
-            }
+            val videoTrackIndex = findTrack(videoExtractor, "video/")
+                ?: throw IllegalArgumentException("No video track found in video input")
+            val audioTrackIndex = findTrack(audioExtractor, "audio/")
+                ?: throw IllegalArgumentException("No audio track found in audio input")
 
-            // Find audio track
-            var audioTrackIndex = -1
-            var audioFormat: MediaFormat? = null
-            for (i in 0 until audioExtractor.trackCount) {
-                val format = audioExtractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("audio/")) {
-                    audioTrackIndex = i
-                    audioFormat = format
-                    break
-                }
-            }
+            val videoFormat = videoExtractor.getTrackFormat(videoTrackIndex)
+            val audioFormat = audioExtractor.getTrackFormat(audioTrackIndex)
+            val bufferSize = requiredBufferSize(videoFormat, audioFormat)
 
-            if (videoTrackIndex == -1 || videoFormat == null) {
-                return@withContext Result.failure(IllegalStateException("No valid video track found in source"))
-            }
-
-            if (outputFile.exists()) {
-                outputFile.delete()
-            }
             outputFile.parentFile?.mkdirs()
+            if (outputFile.exists() && !outputFile.delete()) {
+                throw IllegalStateException("Could not replace existing output file")
+            }
 
             muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val muxerVideoTrack = muxer.addTrack(videoFormat)
-            val muxerAudioTrack = if (audioTrackIndex != -1 && audioFormat != null) {
-                muxer.addTrack(audioFormat)
-            } else -1
-
+            val videoMuxerTrack = muxer.addTrack(videoFormat)
+            val audioMuxerTrack = muxer.addTrack(audioFormat)
             muxer.start()
+            muxerStarted = true
 
-            val buffer = ByteBuffer.allocate(BUFFER_SIZE)
+            videoExtractor.selectTrack(videoTrackIndex)
+            audioExtractor.selectTrack(audioTrackIndex)
+            val videoCursor = TrackCursor(videoExtractor, videoMuxerTrack)
+            val audioCursor = TrackCursor(audioExtractor, audioMuxerTrack)
+            val buffer = ByteBuffer.allocateDirect(bufferSize)
             val bufferInfo = MediaCodec.BufferInfo()
 
-            // Copy video track
-            videoExtractor.selectTrack(videoTrackIndex)
-            while (true) {
-                bufferInfo.offset = 0
-                bufferInfo.size = videoExtractor.readSampleData(buffer, 0)
-                if (bufferInfo.size < 0) {
-                    bufferInfo.size = 0
-                    break
+            val videoDuration = durationUs(videoFormat)
+            val audioDuration = durationUs(audioFormat)
+            val duration = maxOf(videoDuration, audioDuration).coerceAtLeast(1L)
+            var lastProgress = -1
+
+            while (videoCursor.hasSample || audioCursor.hasSample) {
+                val cursor = when {
+                    !audioCursor.hasSample -> videoCursor
+                    !videoCursor.hasSample -> audioCursor
+                    videoCursor.timeUs <= audioCursor.timeUs -> videoCursor
+                    else -> audioCursor
                 }
-                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
-                bufferInfo.flags = mapSampleFlagsToBufferFlags(videoExtractor.sampleFlags)
-                muxer.writeSampleData(muxerVideoTrack, buffer, bufferInfo)
-                videoExtractor.advance()
+
+                buffer.clear()
+                val sampleTimeUs = cursor.extractor.sampleTime
+                val sampleSize = cursor.extractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) {
+                    cursor.hasSample = false
+                    continue
+                }
+
+                bufferInfo.set(
+                    0,
+                    sampleSize,
+                    sampleTimeUs,
+                    mapSampleFlagsToBufferFlags(cursor.extractor.sampleFlags)
+                )
+                buffer.position(0)
+                buffer.limit(sampleSize)
+                muxer.writeSampleData(cursor.muxerTrack, buffer, bufferInfo)
+                cursor.extractor.advance()
+                cursor.hasSample = cursor.extractor.sampleTime >= 0L
+
+                val progress = ((sampleTimeUs.toDouble() / duration) * 100.0)
+                    .toInt().coerceIn(0, 99)
+                if (progress != lastProgress) {
+                    lastProgress = progress
+                    onProgress?.invoke(progress / 100f)
+                }
             }
 
-            // Copy audio track if present
-            if (audioTrackIndex != -1 && muxerAudioTrack != -1) {
-                audioExtractor.selectTrack(audioTrackIndex)
-                while (true) {
-                    bufferInfo.offset = 0
-                    bufferInfo.size = audioExtractor.readSampleData(buffer, 0)
-                    if (bufferInfo.size < 0) {
-                        bufferInfo.size = 0
-                        break
-                    }
-                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
-                    bufferInfo.flags = mapSampleFlagsToBufferFlags(audioExtractor.sampleFlags)
-                    muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
-                    audioExtractor.advance()
-                }
+            muxer.stop()
+            muxerStarted = false
+            if (!outputFile.isFile || outputFile.length() == 0L) {
+                throw IllegalStateException("Muxer produced an empty output file")
             }
-
-            onProgress?.invoke(1.0f)
+            success = true
+            onProgress?.invoke(1f)
             Result.success(outputFile)
         } catch (e: Exception) {
-            Log.e(TAG, "Error merging media tracks: ${e.message}", e)
+            Log.e(TAG, "Media merge failed: ${e.message}", e)
             Result.failure(e)
         } finally {
-            try {
-                muxer?.stop()
-                muxer?.release()
-            } catch (ignored: Exception) {}
-            try { videoExtractor?.release() } catch (ignored: Exception) {}
-            try { audioExtractor?.release() } catch (ignored: Exception) {}
+            if (muxerStarted) runCatching { muxer?.stop() }
+            runCatching { muxer?.release() }
+            runCatching { videoExtractor?.release() }
+            runCatching { audioExtractor?.release() }
+            if (!success && outputFile.exists()) outputFile.delete()
         }
     }
 
     /**
-     * Extracts audio track from video file and saves as audio container (.m4a)
+     * Extracts an existing encoded audio track into an M4A container.
+     * This is remuxing, not MP3 transcoding.
      */
     suspend fun extractAudio(
         videoFile: File,
@@ -136,54 +163,94 @@ class MediaProcessor {
     ): Result<File> = withContext(Dispatchers.IO) {
         var extractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        var success = false
+
         try {
-            extractor = MediaExtractor().apply { setDataSource(videoFile.absolutePath) }
-            var audioTrackIndex = -1
-            var audioFormat: MediaFormat? = null
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("audio/")) {
-                    audioTrackIndex = i
-                    audioFormat = format
-                    break
-                }
+            require(videoFile.isFile && videoFile.length() > 0L) { "Input video is missing or empty" }
+            require(outputAudioFile.extension.equals("m4a", ignoreCase = true) ||
+                outputAudioFile.extension.equals("mp4", ignoreCase = true)) {
+                "Audio extraction output must use an M4A/MP4 container"
             }
 
-            if (audioTrackIndex == -1 || audioFormat == null) {
-                return@withContext Result.failure(IllegalStateException("No audio track found in video"))
-            }
+            extractor = MediaExtractor().apply { setDataSource(videoFile.absolutePath) }
+            val audioTrackIndex = findTrack(extractor, "audio/")
+                ?: throw IllegalArgumentException("No audio track found in video")
+            val audioFormat = extractor.getTrackFormat(audioTrackIndex)
+            val buffer = ByteBuffer.allocateDirect(requiredBufferSize(audioFormat))
 
             outputAudioFile.parentFile?.mkdirs()
+            if (outputAudioFile.exists() && !outputAudioFile.delete()) {
+                throw IllegalStateException("Could not replace existing audio output")
+            }
+
             muxer = MediaMuxer(outputAudioFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             val muxerTrack = muxer.addTrack(audioFormat)
             muxer.start()
-
-            val buffer = ByteBuffer.allocate(BUFFER_SIZE)
-            val bufferInfo = MediaCodec.BufferInfo()
+            muxerStarted = true
             extractor.selectTrack(audioTrackIndex)
+            val bufferInfo = MediaCodec.BufferInfo()
 
             while (true) {
-                bufferInfo.offset = 0
-                bufferInfo.size = extractor.readSampleData(buffer, 0)
-                if (bufferInfo.size < 0) break
-                bufferInfo.presentationTimeUs = extractor.sampleTime
-                bufferInfo.flags = mapSampleFlagsToBufferFlags(extractor.sampleFlags)
+                buffer.clear()
+                val sampleTimeUs = extractor.sampleTime
+                val sampleSize = extractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) break
+
+                bufferInfo.set(
+                    0,
+                    sampleSize,
+                    sampleTimeUs,
+                    mapSampleFlagsToBufferFlags(extractor.sampleFlags)
+                )
+                buffer.position(0)
+                buffer.limit(sampleSize)
                 muxer.writeSampleData(muxerTrack, buffer, bufferInfo)
                 extractor.advance()
             }
 
+            muxer.stop()
+            muxerStarted = false
+            check(outputAudioFile.isFile && outputAudioFile.length() > 0L) {
+                "Audio extraction produced an empty file"
+            }
+            success = true
             Result.success(outputAudioFile)
         } catch (e: Exception) {
-            Log.e(TAG, "Error extracting audio: ${e.message}", e)
+            Log.e(TAG, "Audio extraction failed: ${e.message}", e)
             Result.failure(e)
         } finally {
-            try {
-                muxer?.stop()
-                muxer?.release()
-            } catch (ignored: Exception) {}
-            try { extractor?.release() } catch (ignored: Exception) {}
+            if (muxerStarted) runCatching { muxer?.stop() }
+            runCatching { muxer?.release() }
+            runCatching { extractor?.release() }
+            if (!success && outputAudioFile.exists()) outputAudioFile.delete()
         }
+    }
+
+    private fun findTrack(extractor: MediaExtractor, mimePrefix: String): Int? {
+        for (index in 0 until extractor.trackCount) {
+            val mime = extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME).orEmpty()
+            if (mime.startsWith(mimePrefix)) return index
+        }
+        return null
+    }
+
+    private fun durationUs(format: MediaFormat): Long =
+        runCatching { format.getLong(MediaFormat.KEY_DURATION) }.getOrDefault(0L)
+
+    private fun requiredBufferSize(vararg formats: MediaFormat): Int {
+        val advertised = formats.mapNotNull { format ->
+            runCatching {
+                if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+                    format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+                } else null
+            }.getOrNull()
+        }.maxOrNull() ?: DEFAULT_BUFFER_SIZE
+
+        require(advertised in 1..MAX_BUFFER_SIZE) {
+            "Media sample buffer requirement is too large: $advertised bytes"
+        }
+        return maxOf(DEFAULT_BUFFER_SIZE, advertised)
     }
 
     private fun mapSampleFlagsToBufferFlags(sampleFlags: Int): Int {

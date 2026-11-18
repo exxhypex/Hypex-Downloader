@@ -1,16 +1,23 @@
 """
-Format parsing, filtering, and preset generator for HYPEX Engine
+Format parsing, filtering, and preset generator for HYPEX Engine.
+The UI is deliberately capped to keep large format catalogs responsive.
 """
 from typing import List, Dict, Any, Optional
 
+
 class FormatManager:
+    MAX_VISIBLE_FORMATS = 60
+
     @staticmethod
     def parse_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         parsed = []
         for f in formats:
             format_id = str(f.get("format_id", ""))
             ext = f.get("ext", "mp4")
-            resolution = f.get("resolution") or (f"{f.get('width')}x{f.get('height')}" if f.get("width") and f.get("height") else None)
+            resolution = f.get("resolution") or (
+                f"{f.get('width')}x{f.get('height')}"
+                if f.get("width") and f.get("height") else None
+            )
             vcodec = f.get("vcodec", "none")
             acodec = f.get("acodec", "none")
             filesize = f.get("filesize") or f.get("filesize_approx") or 0
@@ -21,9 +28,7 @@ class FormatManager:
 
             is_video = vcodec != "none" and vcodec is not None
             is_audio = acodec != "none" and acodec is not None
-
-            # Skip storyboards or mhtml
-            if ext in ["mhtml", "webp"] and not is_video:
+            if ext in ("mhtml", "webp") and not is_video:
                 continue
 
             parsed.append({
@@ -43,32 +48,38 @@ class FormatManager:
                 "height": f.get("height", 0) or 0,
                 "width": f.get("width", 0) or 0,
             })
-        
-        # Sort formats: highest resolution first, then highest bitrate
-        parsed.sort(key=lambda x: (x["height"] if x["height"] else 0, x["tbr"] if x["tbr"] else 0), reverse=True)
-        return parsed
+
+        # Prefer ready-to-play muxed formats: they do not need an FFmpeg merge step.
+        parsed.sort(
+            key=lambda item: (
+                item["is_muxed"],
+                item["height"],
+                item["tbr"] if item["tbr"] else 0
+            ),
+            reverse=True
+        )
+        return parsed[:FormatManager.MAX_VISIBLE_FORMATS]
 
     @staticmethod
     def build_format_selector(preset_name: str, custom_format_id: Optional[str] = None) -> str:
         if custom_format_id:
-            return f"{custom_format_id}+bestaudio/best"
-        
+            return custom_format_id
+
         name_lower = preset_name.lower()
         if "best" in name_lower:
-            return "bestvideo+bestaudio/best"
+            return "best[ext=mp4]/best"
         elif "2160" in name_lower or "4k" in name_lower:
-            return "bestvideo[height<=2160]+bestaudio/best[height<=2160]"
+            return "best[height<=2160][ext=mp4]/best[height<=2160]/best"
         elif "1440" in name_lower or "2k" in name_lower:
-            return "bestvideo[height<=1440]+bestaudio/best[height<=1440]"
+            return "best[height<=1440][ext=mp4]/best[height<=1440]/best"
         elif "1080" in name_lower:
-            return "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+            return "best[height<=1080][ext=mp4]/best[height<=1080]/best"
         elif "720" in name_lower:
-            return "bestvideo[height<=720]+bestaudio/best[height<=720]"
+            return "best[height<=720][ext=mp4]/best[height<=720]/best"
         elif "480" in name_lower or "data saver" in name_lower:
-            return "bestvideo[height<=480]+bestaudio/best[height<=480]"
+            return "best[height<=480][ext=mp4]/best[height<=480]/best"
         elif "mp3" in name_lower:
-            return "bestaudio/best"
+            return "bestaudio[ext=m4a]/bestaudio/best"
         elif "m4a" in name_lower or "audio" in name_lower:
             return "bestaudio[ext=m4a]/bestaudio/best"
-        else:
-            return "bestvideo+bestaudio/best"
+        return "best[ext=mp4]/best"
