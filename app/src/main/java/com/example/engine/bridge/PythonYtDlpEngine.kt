@@ -107,7 +107,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
             val template = File(outputDir, "${task.id}_%(title).80s.%(ext)s").absolutePath
             val callback = object {
                 @Suppress("unused")
-                fun onProgress(payload: String) {
+                fun emitProgress(payload: String) {
                     runCatching {
                         val json = JSONObject(payload)
                         onProgress(
