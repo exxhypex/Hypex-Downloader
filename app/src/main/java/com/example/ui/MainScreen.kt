@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -122,15 +123,17 @@ fun MainScreen(viewModel: HypexViewModel, modifier: Modifier = Modifier) {
             }
         }
     ) { innerPadding ->
-        androidx.compose.runtime.key(currentDestination) {
-            when (currentDestination) {
+        Box(modifier = Modifier.padding(innerPadding)) {
+            androidx.compose.runtime.key(currentDestination) {
+                when (currentDestination) {
                 AppDestination.HOME -> HomeScreen(
                     viewModel = viewModel,
                     onNavigateToDownloads = { currentDestination = AppDestination.DOWNLOADS }
                 )
                 AppDestination.DOWNLOADS -> DownloadsScreen(viewModel = viewModel)
                 AppDestination.PLAYLISTS -> PlaylistsScreen(viewModel = viewModel)
-                AppDestination.SETTINGS -> SettingsScreen(viewModel = viewModel)
+                    AppDestination.SETTINGS -> SettingsScreen(viewModel = viewModel)
+                }
             }
         }
     }
