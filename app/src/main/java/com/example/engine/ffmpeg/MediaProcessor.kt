@@ -227,6 +227,117 @@ class MediaProcessor {
         }
     }
 
+    /**
+     * Convert an audio file to MP3 using the bundled audio-only FFmpeg runtime.
+     * The FFmpeg session is tracked by task ID so cancellation reaches the encoder.
+     */
+    suspend fun convertAudioToMp3(
+        inputFile: File,
+        outputFile: File,
+        taskId: Long,
+        bitrateKbps: Int = 192,
+        onProgress: ((Float) -> Unit)? = null
+    ): Result<File> = withContext(Dispatchers.IO) {
+        try {
+            require(inputFile.isFile && inputFile.length() > 0L) { "Audio input is missing or empty" }
+            require(outputFile.extension.equals("mp3", ignoreCase = true)) {
+                "MP3 conversion output must use the .mp3 extension"
+            }
+            require(bitrateKbps in 64..320) { "Unsupported MP3 bitrate: $bitrateKbps kbps" }
+
+            outputFile.parentFile?.mkdirs()
+            if (outputFile.exists() && !outputFile.delete()) {
+                throw IllegalStateException("Could not replace existing MP3 output")
+            }
+
+            val durationMs = readDurationMs(inputFile)
+            val arguments = arrayOf(
+                "-hide_banner", "-y", "-i", inputFile.absolutePath,
+                "-map", "0:a:0", "-vn", "-c:a", "libmp3lame",
+                "-b:a", "${bitrateKbps}k", "-id3v2_version", "3",
+                outputFile.absolutePath
+            )
+
+            val conversionResult = suspendCancellableCoroutine<Result<File>> { continuation ->
+                val cancelled = AtomicBoolean(false)
+                var sessionId: Long? = null
+
+                continuation.invokeOnCancellation {
+                    cancelled.set(true)
+                    sessionId?.let { FFmpegKit.cancel(it) }
+                }
+
+                val session = FFmpegKit.executeWithArgumentsAsync(
+                    arguments,
+                    { completed ->
+                        activeFfmpegSessions.remove(taskId)
+                        val result = if (ReturnCode.isSuccess(completed.returnCode) &&
+                            outputFile.isFile && outputFile.length() > 0L
+                        ) {
+                            onProgress?.invoke(1f)
+                            Result.success(outputFile)
+                        } else {
+                            val detail = completed.failStackTrace
+                                ?: completed.allLogsAsString
+                                ?: "FFmpeg MP3 conversion failed"
+                            Result.failure(IllegalStateException(detail))
+                        }
+                        if (continuation.isActive) continuation.resume(result)
+                    },
+                    null,
+                    { statistics ->
+                        if (durationMs > 0L) {
+                            onProgress?.invoke(
+                                (statistics.time.toFloat() / durationMs.toFloat()).coerceIn(0f, 0.99f)
+                            )
+                        }
+                    }
+                )
+
+                sessionId = session.sessionId
+                activeFfmpegSessions[taskId] = session.sessionId
+                if (cancelled.get()) {
+                    activeFfmpegSessions.remove(taskId)
+                    FFmpegKit.cancel(session.sessionId)
+                }
+            }
+
+            conversionResult.onFailure {
+                if (outputFile.exists()) outputFile.delete()
+            }
+            conversionResult
+        } catch (error: Exception) {
+            if (outputFile.exists()) outputFile.delete()
+            Result.failure(error)
+        }
+    }
+
+    /** Cancel an active FFmpeg conversion associated with a download task. */
+    fun cancelProcessing(taskId: Long) {
+        activeFfmpegSessions.remove(taskId)?.let { sessionId ->
+            FFmpegKit.cancel(sessionId)
+        }
+    }
+
+    private fun readDurationMs(file: File): Long {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            (0 until extractor.trackCount)
+                .mapNotNull { index ->
+                    val format = extractor.getTrackFormat(index)
+                    if (format.getString(MediaFormat.KEY_MIME).orEmpty().startsWith("audio/")) {
+                        runCatching { format.getLong(MediaFormat.KEY_DURATION) / 1_000L }.getOrNull()
+                    } else null
+                }
+                .maxOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
     private fun findTrack(extractor: MediaExtractor, mimePrefix: String): Int? {
         for (index in 0 until extractor.trackCount) {
             val mime = extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME).orEmpty()
