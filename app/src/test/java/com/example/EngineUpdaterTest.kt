@@ -6,6 +6,7 @@ import com.example.engine.updates.EngineUpdater
 import com.example.engine.updates.UpdateChannel
 import com.example.engine.updates.UpdateInstallState
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
