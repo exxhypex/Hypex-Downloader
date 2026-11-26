@@ -21,18 +21,13 @@ android {
     versionName = "1.0"
 
 
+    ndk {
+      abiFilters += listOf("arm64-v8a")
+    }
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
-  // Produce a device-specific APK instead of bundling multiple native ABIs.
-  splits {
-    abi {
-      isEnable = true
-      reset()
-      include("arm64-v8a")
-      isUniversalApk = false
-    }
-  }
 
   signingConfigs {
     create("release") {
