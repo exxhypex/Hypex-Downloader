@@ -50,7 +50,10 @@ class TestHypexEngine(unittest.TestCase):
             None, "https://example.com/video", "bestvideo+bestaudio/best"
         )
         self.assertTrue(needs_merge)
-        self.assertEqual(pair, ["bestvideo[ext=mp4]/bestvideo", "bestaudio[ext=m4a]/bestaudio"])
+        self.assertEqual(pair, [
+            "bestvideo[ext=mp4][vcodec^=avc1]/bestvideo[vcodec^=avc1]",
+            "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[acodec^=mp4a]"
+        ])
 
     def test_native_merge_detects_selected_video_only_format(self):
         class FakeYdl:
@@ -75,7 +78,17 @@ class TestHypexEngine(unittest.TestCase):
             FakeYdl, "https://example.com/video", "137"
         )
         self.assertTrue(needs_merge)
-        self.assertEqual(pair, ["137", "bestaudio[ext=m4a]/bestaudio"])
+        self.assertEqual(pair, ["137", "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[acodec^=mp4a]"])
+
+    def test_native_merge_adds_codec_filters_to_format_pairs(self):
+        engine = HypexEngine('/tmp/hypex_engine_test')
+        pair = engine._prefer_mux_compatible_codecs([
+            "bestvideo[height<=1080]", "bestaudio"
+        ])
+        self.assertEqual(pair, [
+            "bestvideo[height<=1080][vcodec^=avc1]",
+            "bestaudio[acodec^=mp4a]"
+        ])
 
     def test_error_classification(self):
         err1 = classify_error(Exception("Connection timed out after 30000ms"))

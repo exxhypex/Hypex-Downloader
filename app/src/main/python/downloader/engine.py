@@ -146,11 +146,15 @@ class HypexEngine:
         # Explicit yt-dlp pair selectors are handled as two downloads so Android
         # can mux the encoded tracks without requiring an external ffmpeg binary.
         if selector.startswith("bestvideo+bestaudio"):
-            return True, ["bestvideo[ext=mp4]/bestvideo", "bestaudio[ext=m4a]/bestaudio"]
+            return True, [
+                "bestvideo[ext=mp4][vcodec^=avc1]/bestvideo[vcodec^=avc1]",
+                "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[acodec^=mp4a]"
+            ]
         if "+" in selector and "/" in selector:
-            return True, selector.split("/", 1)[0].split("+", 1)
+            pair = selector.split("/", 1)[0].split("+", 1)
+            return True, self._prefer_mux_compatible_codecs(pair)
         if "+" in selector:
-            return True, selector.split("+", 1)
+            return True, self._prefer_mux_compatible_codecs(selector.split("+", 1))
 
         # A user-selected video-only format ID also needs a separate audio stream.
         is_simple_format_id = (
@@ -167,8 +171,23 @@ class HypexEngine:
                     None
                 )
                 if selected and selected.get("vcodec") not in (None, "none") and selected.get("acodec") in (None, "none"):
-                    return True, [selector, "bestaudio[ext=m4a]/bestaudio"]
+                    if not str(selected.get("vcodec", "")).startswith("avc1"):
+                        raise RuntimeError(
+                            "Selected video codec is not supported by the native MP4 muxer; choose an H.264/AVC format"
+                        )
+                    return True, [selector, "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[acodec^=mp4a]"]
         return False, []
+
+    @staticmethod
+    def _prefer_mux_compatible_codecs(pair):
+        if len(pair) != 2:
+            return pair
+        video, audio = pair
+        if video.startswith("bestvideo") and "vcodec" not in video:
+            video += "[vcodec^=avc1]"
+        if audio.startswith("bestaudio") and "acodec" not in audio:
+            audio += "[acodec^=mp4a]"
+        return [video, audio]
 
     def download_media(
         self,
