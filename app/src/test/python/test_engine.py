@@ -50,7 +50,7 @@ class TestHypexEngine(unittest.TestCase):
             None, "https://example.com/video", "bestvideo+bestaudio/best"
         )
         self.assertTrue(needs_merge)
-        self.assertEqual(pair, ["bestvideo", "bestaudio"])
+        self.assertEqual(pair, ["bestvideo[ext=mp4]/bestvideo", "bestaudio[ext=m4a]/bestaudio"])
 
     def test_native_merge_detects_selected_video_only_format(self):
         class FakeYdl:
