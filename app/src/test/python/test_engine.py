@@ -40,6 +40,12 @@ class TestHypexEngine(unittest.TestCase):
         self.assertFalse(options['ignoreerrors'])
         self.assertEqual(options['concurrent_fragment_downloads'], 2)
 
+    def test_extraction_does_not_apply_download_format(self):
+        engine = HypexEngine('/tmp/hypex_engine_test')
+        options = engine._build_options(is_extract_only=True)
+        self.assertTrue(options['skip_download'])
+        self.assertNotIn('format', options)
+
     def test_error_classification(self):
         err1 = classify_error(Exception("Connection timed out after 30000ms"))
         self.assertEqual(err1.code, "NETWORK_ERROR")
