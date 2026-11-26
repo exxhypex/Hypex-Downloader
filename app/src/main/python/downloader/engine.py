@@ -145,6 +145,8 @@ class HypexEngine:
     def _requires_native_merge(self, ydl_class, url, selector):
         # Explicit yt-dlp pair selectors are handled as two downloads so Android
         # can mux the encoded tracks without requiring an external ffmpeg binary.
+        if selector.startswith("bestvideo+bestaudio"):
+            return True, ["bestvideo[ext=mp4]/bestvideo", "bestaudio[ext=m4a]/bestaudio"]
         if "+" in selector and "/" in selector:
             return True, selector.split("/", 1)[0].split("+", 1)
         if "+" in selector:
