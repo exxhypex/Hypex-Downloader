@@ -24,6 +24,9 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE status IN ('QUEUED', 'DOWNLOADING', 'PROCESSING') ORDER BY createdAt ASC")
     suspend fun getActiveAndQueuedTasks(): List<DownloadEntity>
 
+    @Query("SELECT * FROM downloads WHERE status = 'QUEUED' ORDER BY createdAt ASC, id ASC LIMIT 1")
+    suspend fun getNextQueuedDownload(): DownloadEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDownload(entity: DownloadEntity): Long
 
