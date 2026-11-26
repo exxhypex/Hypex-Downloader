@@ -90,7 +90,6 @@ class HypexEngine:
             options["cookiefile"] = cookie_path
 
         if is_extract_only:
-            # Extraction must enumerate streams without selecting a download format.
             options.pop("format", None)
             options["extract_flat"] = "in_playlist"
             options["skip_download"] = True
@@ -122,6 +121,55 @@ class HypexEngine:
             err = classify_error(e)
             return json.dumps({"success": False, "error": err.to_dict()})
 
+    @staticmethod
+    def _resolved_file(info, ydl):
+        requested = info.get("requested_downloads") or []
+        filename = next(
+            (item.get("filepath") for item in requested if item.get("filepath")),
+            None
+        )
+        filename = filename or info.get("filepath") or info.get("_filename") or ydl.prepare_filename(info)
+        if not filename or not os.path.isfile(filename):
+            raise RuntimeError("yt-dlp finished but its output file could not be located")
+        return filename
+
+    def _download_one(self, ydl_class, options, url, selector):
+        attempt_options = dict(options)
+        attempt_options["format"] = selector
+        with ydl_class(attempt_options) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info is None:
+                raise RuntimeError("yt-dlp completed without returning media metadata")
+            return self._resolved_file(info, ydl)
+
+    def _requires_native_merge(self, ydl_class, url, selector):
+        # Explicit yt-dlp pair selectors are handled as two downloads so Android
+        # can mux the encoded tracks without requiring an external ffmpeg binary.
+        if selector.startswith("bestvideo+bestaudio"):
+            return True, ["bestvideo[ext=mp4]/bestvideo", "bestaudio[ext=m4a]/bestaudio"]
+        if "+" in selector and "/" in selector:
+            return True, selector.split("/", 1)[0].split("+", 1)
+        if "+" in selector:
+            return True, selector.split("+", 1)
+
+        # A user-selected video-only format ID also needs a separate audio stream.
+        is_simple_format_id = (
+            selector not in ("", "best", "worst")
+            and not any(char in selector for char in "[]/,+()")
+        )
+        if is_simple_format_id:
+            options = self._build_options(is_extract_only=True)
+            with ydl_class(options) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if info and not info.get("entries"):
+                selected = next(
+                    (item for item in info.get("formats", []) if str(item.get("format_id")) == selector),
+                    None
+                )
+                if selected and selected.get("vcodec") not in (None, "none") and selected.get("acodec") in (None, "none"):
+                    return True, [selector, "bestaudio[ext=m4a]/bestaudio"]
+        return False, []
+
     def download_media(
         self,
         task_id: str,
@@ -136,33 +184,49 @@ class HypexEngine:
             if ydl_class is None:
                 raise RuntimeError("Bundled yt-dlp runtime is unavailable")
 
+            selector = format_selector or "best[ext=mp4]/best"
             options = self._build_options(
                 task_id=task_id,
-                format_selector=format_selector or "best[ext=mp4]/best",
+                format_selector=selector,
                 output_template=output_template,
                 progress_callback=progress_callback,
                 is_extract_only=False
             )
 
-            selectors = [options["format"]]
-            if options["format"] != "best":
+            needs_merge, pair = self._requires_native_merge(ydl_class, url, selector)
+            if needs_merge:
+                if len(pair) != 2 or not pair[0] or not pair[1]:
+                    raise RuntimeError("Invalid separate video/audio format selection")
+                video_template = output_template.replace(".%(ext)s", ".video.%(ext)s")
+                audio_template = output_template.replace(".%(ext)s", ".audio.%(ext)s")
+                video_file = self._download_one(ydl_class, dict(options, outtmpl=video_template), url, pair[0])
+                try:
+                    audio_file = self._download_one(ydl_class, dict(options, outtmpl=audio_template), url, pair[1])
+                except Exception:
+                    if os.path.exists(video_file):
+                        os.remove(video_file)
+                    raise
+                return json.dumps({
+                    "success": True,
+                    "task_id": task_id,
+                    "output_video_file": video_file,
+                    "output_audio_file": audio_file,
+                    "requires_native_merge": True
+                })
+
+            selectors = [selector]
+            if selector != "best":
                 selectors.append("best")
 
-            for index, selector in enumerate(selectors):
-                attempt_options = dict(options)
-                attempt_options["format"] = selector
+            for index, fallback_selector in enumerate(selectors):
                 try:
-                    with ydl_class(attempt_options) as ydl:
-                        info = ydl.extract_info(url, download=True)
-                        if info is None:
-                            raise RuntimeError("yt-dlp completed without returning media metadata")
-                        filename = info.get("filepath") or info.get("_filename") or ydl.prepare_filename(info)
-                        return json.dumps({
-                            "success": True,
-                            "task_id": task_id,
-                            "output_file": filename,
-                            "format_fallback": index > 0
-                        })
+                    filename = self._download_one(ydl_class, options, url, fallback_selector)
+                    return json.dumps({
+                        "success": True,
+                        "task_id": task_id,
+                        "output_file": filename,
+                        "format_fallback": index > 0
+                    })
                 except Exception as error:
                     if classify_error(error).code != "FORMAT_NOT_AVAILABLE" or index == len(selectors) - 1:
                         raise

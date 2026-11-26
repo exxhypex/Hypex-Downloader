@@ -2,20 +2,18 @@
 Unit tests for HYPEX Downloader Python Engine
 """
 import unittest
-import json
 import sys
 import os
 
-# Add package to path
 sys.path.insert(0, os.path.abspath("app/src/main/python"))
 
 from downloader.formats import FormatManager
 from downloader.cancellation import CancellationController
 from downloader.cookies import CookieManager
-from downloader.errors import classify_error, NetworkError, VideoUnavailableError
+from downloader.errors import classify_error
 from downloader.playlists import PlaylistExtractor
-from downloader.progress import ProgressHookHandler
 from downloader.engine import HypexEngine
+
 
 class TestHypexEngine(unittest.TestCase):
     def test_cancellation(self):
@@ -46,21 +44,50 @@ class TestHypexEngine(unittest.TestCase):
         self.assertTrue(options['skip_download'])
         self.assertNotIn('format', options)
 
+    def test_native_merge_splits_pair_selector(self):
+        engine = HypexEngine('/tmp/hypex_engine_test')
+        needs_merge, pair = engine._requires_native_merge(
+            None, "https://example.com/video", "bestvideo+bestaudio/best"
+        )
+        self.assertTrue(needs_merge)
+        self.assertEqual(pair, ["bestvideo[ext=mp4]/bestvideo", "bestaudio[ext=m4a]/bestaudio"])
+
+    def test_native_merge_detects_selected_video_only_format(self):
+        class FakeYdl:
+            def __init__(self, options):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def extract_info(self, url, download=False):
+                return {
+                    "formats": [
+                        {"format_id": "137", "vcodec": "avc1", "acodec": "none"}
+                    ]
+                }
+
+        engine = HypexEngine('/tmp/hypex_engine_test')
+        needs_merge, pair = engine._requires_native_merge(
+            FakeYdl, "https://example.com/video", "137"
+        )
+        self.assertTrue(needs_merge)
+        self.assertEqual(pair, ["137", "bestaudio[ext=m4a]/bestaudio"])
+
     def test_error_classification(self):
         err1 = classify_error(Exception("Connection timed out after 30000ms"))
         self.assertEqual(err1.code, "NETWORK_ERROR")
-
         err2 = classify_error(Exception("This video is unavailable"))
         self.assertEqual(err2.code, "VIDEO_UNAVAILABLE")
-
         err3 = classify_error(Exception("Sign in to confirm your age"))
         self.assertEqual(err3.code, "AGE_RESTRICTED")
 
     def test_cookie_validation(self):
         cm = CookieManager("/tmp/hypex_test")
-        invalid = "invalid cookie format"
-        self.assertFalse(cm.validate_netscape_format(invalid))
-
+        self.assertFalse(cm.validate_netscape_format("invalid cookie format"))
         valid = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tvalue123"
         self.assertTrue(cm.validate_netscape_format(valid))
 
@@ -85,6 +112,7 @@ class TestHypexEngine(unittest.TestCase):
             for i in range(100)
         ]
         self.assertLessEqual(len(FormatManager.parse_formats(raw)), FormatManager.MAX_VISIBLE_FORMATS)
+
 
 if __name__ == '__main__':
     unittest.main()
