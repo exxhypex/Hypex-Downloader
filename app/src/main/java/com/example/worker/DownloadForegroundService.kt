@@ -110,54 +110,63 @@ class DownloadForegroundService : Service() {
     }
 
     private fun executeDownload(taskId: Long) {
-        currentDownloadJob?.cancel()
+        // A second enqueue must not cancel the task already running. The active
+        // worker drains queued tasks sequentially after each task reaches a terminal state.
+        if (currentDownloadJob?.isActive == true) return
+
         currentDownloadJob = serviceScope.launch {
-            val task = repository.getDownloadById(taskId)
-            if (task == null) {
-                stopSelf()
-                return@launch
-            }
+            var nextTaskId: Long? = taskId
 
-            repository.markStatus(taskId, DownloadStatus.DOWNLOADING)
-            val lastPersistAt = AtomicLong(0L)
-            val lastNotificationAt = AtomicLong(0L)
+            while (nextTaskId != null) {
+                val task = repository.getDownloadById(nextTaskId)
+                if (task != null &&
+                    (task.status == DownloadStatus.QUEUED || task.status == DownloadStatus.PAUSED)
+                ) {
+                    activeTaskId = task.id
+                    repository.markStatus(task.id, DownloadStatus.DOWNLOADING)
+                    val lastPersistAt = AtomicLong(0L)
+                    val lastNotificationAt = AtomicLong(0L)
 
-            val result = repository.engineBridge.startDownload(task) { progress: DownloadProgress ->
-                val now = SystemClock.elapsedRealtime()
-                val terminal = progress.status.equals("FINISHED", ignoreCase = true) ||
-                    progress.status.equals("COMPLETED", ignoreCase = true)
-                val persist = terminal || now - lastPersistAt.get() >= 1_000L
-                val notify = terminal || now - lastNotificationAt.get() >= 1_500L
+                    val result = repository.engineBridge.startDownload(task) { progress: DownloadProgress ->
+                        val now = SystemClock.elapsedRealtime()
+                        val terminal = progress.status.equals("FINISHED", ignoreCase = true) ||
+                            progress.status.equals("COMPLETED", ignoreCase = true)
+                        val persist = terminal || now - lastPersistAt.get() >= 1_000L
+                        val notify = terminal || now - lastNotificationAt.get() >= 1_500L
 
-                if (persist || notify) {
-                    if (persist) lastPersistAt.set(now)
-                    if (notify) lastNotificationAt.set(now)
-                    serviceScope.launch {
-                        if (persist) repository.updateProgress(progress)
-                        if (notify) {
-                            val speedStr = String.format("%.1f MB/s", progress.speed / (1024f * 1024f))
-                            updateNotification(task.title, progress.progress.toInt(), speedStr, "${progress.eta}s")
+                        if (persist || notify) {
+                            if (persist) lastPersistAt.set(now)
+                            if (notify) lastNotificationAt.set(now)
+                            serviceScope.launch {
+                                if (persist) repository.updateProgress(progress)
+                                if (notify) {
+                                    val speedStr = String.format("%.1f MB/s", progress.speed / (1024f * 1024f))
+                                    updateNotification(task.title, progress.progress.toInt(), speedStr, "${progress.eta}s")
+                                }
+                            }
+                        }
+                    }
+
+                    if (result.isSuccess) {
+                        val file = result.getOrThrow()
+                        repository.markCompleted(task.id, file.absolutePath)
+                        showCompletedNotification(task.title)
+                    } else {
+                        val error = result.exceptionOrNull()
+                        val message = error?.message ?: "Download failed"
+                        val latestStatus = repository.getDownloadById(task.id)?.status
+                        if (latestStatus != DownloadStatus.PAUSED &&
+                            latestStatus != DownloadStatus.CANCELLED &&
+                            !message.contains("CANCELLED", ignoreCase = true) &&
+                            !message.contains("PAUSED", ignoreCase = true)
+                        ) {
+                            repository.markFailed(task.id, "DOWNLOAD_ERROR", message)
+                            showFailedNotification(task.title, message)
                         }
                     }
                 }
-            }
 
-            if (result.isSuccess) {
-                val file = result.getOrThrow()
-                repository.markCompleted(taskId, file.absolutePath)
-                showCompletedNotification(task.title)
-            } else {
-                val error = result.exceptionOrNull()
-                val message = error?.message ?: "Download failed"
-                val latestStatus = repository.getDownloadById(taskId)?.status
-                if (latestStatus != DownloadStatus.PAUSED &&
-                    latestStatus != DownloadStatus.CANCELLED &&
-                    !message.contains("CANCELLED") &&
-                    !message.contains("PAUSED")
-                ) {
-                    repository.markFailed(taskId, "DOWNLOAD_ERROR", message)
-                    showFailedNotification(task.title, message)
-                }
+                nextTaskId = repository.getNextQueuedTask()?.id
             }
 
             stopForeground(STOP_FOREGROUND_REMOVE)
