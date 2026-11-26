@@ -18,10 +18,6 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Runs the bundled yt-dlp package through Chaquopy.
- * All Python entry points are invoked on Dispatchers.IO.
- */
 class YtDlpProgressCallback(
     private val taskId: Long,
     private val onProgress: (DownloadProgress) -> Unit
@@ -149,27 +145,44 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
                 response.optJSONObject("error")?.optString("message")
                     ?: "yt-dlp download failed"
             }
-            val outputPath = response.optString("output_file")
-            val downloadedFile = File(outputPath)
-            require(outputPath.isNotBlank() && downloadedFile.exists()) {
-                "yt-dlp reported success but the output file was not found"
+
+            val outputVideoPath = response.optString("output_video_file")
+            val outputAudioPath = response.optString("output_audio_file")
+            val downloadedFile = if (outputVideoPath.isNotBlank() && outputAudioPath.isNotBlank()) {
+                val videoFile = File(outputVideoPath)
+                val audioFile = File(outputAudioPath)
+                require(videoFile.isFile && videoFile.length() > 0L) { "Downloaded video stream is missing" }
+                require(audioFile.isFile && audioFile.length() > 0L) { "Downloaded audio stream is missing" }
+
+                emitProcessingProgress(task.id, videoFile, onProgress, 0f)
+                val mergedFile = File(
+                    outputDir,
+                    "${videoFile.nameWithoutExtension.substringBefore(".video")}.mp4"
+                )
+                val merged = mediaProcessor.mergeVideoAndAudio(
+                    videoFile = videoFile,
+                    audioFile = audioFile,
+                    outputFile = mergedFile
+                ) { fraction ->
+                    emitProcessingProgress(task.id, mergedFile, onProgress, fraction)
+                }.getOrThrow()
+                check(merged.isFile && merged.length() > 0L) { "Native media merge produced no output" }
+                videoFile.delete()
+                audioFile.delete()
+                merged
+            } else {
+                val outputPath = response.optString("output_file")
+                val file = File(outputPath)
+                require(outputPath.isNotBlank() && file.isFile && file.length() > 0L) {
+                    "yt-dlp reported success but the output file was not found"
+                }
+                file
             }
 
             if (task.formatDescription.contains("MP3", ignoreCase = true) &&
                 !downloadedFile.extension.equals("mp3", ignoreCase = true)
             ) {
-                onProgress(
-                    DownloadProgress(
-                        taskId = task.id,
-                        status = "PROCESSING",
-                        progress = 0f,
-                        downloadedBytes = downloadedFile.length(),
-                        totalBytes = downloadedFile.length(),
-                        speed = 0L,
-                        eta = 0L,
-                        filename = downloadedFile.absolutePath
-                    )
-                )
+                emitProcessingProgress(task.id, downloadedFile, onProgress, 0f)
                 val mp3File = File(downloadedFile.parentFile, "${downloadedFile.nameWithoutExtension}.mp3")
                 val converted = mediaProcessor.convertAudioToMp3(
                     inputFile = downloadedFile,
@@ -177,18 +190,7 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
                     taskId = task.id,
                     bitrateKbps = 192
                 ) { fraction ->
-                    onProgress(
-                        DownloadProgress(
-                            taskId = task.id,
-                            status = "PROCESSING",
-                            progress = (fraction * 100f).coerceIn(0f, 100f),
-                            downloadedBytes = downloadedFile.length(),
-                            totalBytes = downloadedFile.length(),
-                            speed = 0L,
-                            eta = 0L,
-                            filename = mp3File.absolutePath
-                        )
-                    )
+                    emitProcessingProgress(task.id, mp3File, onProgress, fraction)
                 }.getOrThrow()
                 downloadedFile.delete()
                 converted
@@ -196,6 +198,21 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
                 downloadedFile
             }
         }
+    }
+
+    private fun emitProcessingProgress(taskId: Long, file: File, onProgress: (DownloadProgress) -> Unit, fraction: Float) {
+        onProgress(
+            DownloadProgress(
+                taskId = taskId,
+                status = "PROCESSING",
+                progress = (fraction * 100f).coerceIn(0f, 100f),
+                downloadedBytes = file.takeIf { it.exists() }?.length() ?: 0L,
+                totalBytes = file.takeIf { it.exists() }?.length() ?: 0L,
+                speed = 0L,
+                eta = 0L,
+                filename = file.absolutePath
+            )
+        )
     }
 
     override fun pauseDownload(taskId: Long) {
