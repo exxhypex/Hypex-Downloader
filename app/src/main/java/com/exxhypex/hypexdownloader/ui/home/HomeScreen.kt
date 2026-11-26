@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -66,8 +67,9 @@ import coil.compose.AsyncImage
 import com.exxhypex.hypexdownloader.core.model.DownloadStatus
 import com.exxhypex.hypexdownloader.core.model.PresetItem
 import com.exxhypex.hypexdownloader.ui.HypexViewModel
-import com.exxhypex.hypexdownloader.ui.components.GlassCard
+import com.exxhypex.hypexdownloader.ui.components.HypexGlassPanel
 import com.exxhypex.hypexdownloader.ui.components.StatusBadge
+import com.exxhypex.hypexdownloader.ui.theme.AmoledBlack
 import com.exxhypex.hypexdownloader.ui.theme.AccentGreen
 import com.exxhypex.hypexdownloader.ui.theme.AccentRed
 import com.exxhypex.hypexdownloader.ui.theme.ElectricViolet
@@ -78,6 +80,8 @@ import com.exxhypex.hypexdownloader.ui.theme.SurfaceVariantDark
 import com.exxhypex.hypexdownloader.ui.theme.TextMuted
 import com.exxhypex.hypexdownloader.ui.theme.TextPrimary
 import com.exxhypex.hypexdownloader.ui.theme.TextSecondary
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -96,12 +100,36 @@ fun HomeScreen(
     val completedCount = downloads.count { it.status == DownloadStatus.COMPLETED }
     val recentDownloads = downloads.take(3)
 
+    // A dedicated backdrop lets Miuix Glass panels sample the ambient HYPEX glow without sampling themselves.
+    val backdrop = rememberLayerBackdrop()
+
     val supportedPlatforms = listOf(
         "YouTube", "X / Twitter", "Instagram", "TikTok", "Reddit", "Vimeo", "SoundCloud", "Direct Stream"
     )
 
-    LazyColumn(
-        modifier = modifier
+    Box(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .layerBackdrop(backdrop)
+                .background(AmoledBlack)
+        ) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(300.dp)
+                    .background(Brush.radialGradient(listOf(NeonCyan.copy(alpha = 0.18f), Color.Transparent)))
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .size(260.dp)
+                    .background(Brush.radialGradient(listOf(ElectricViolet.copy(alpha = 0.14f), Color.Transparent)))
+            )
+        }
+
+        LazyColumn(
+        modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp),
@@ -180,7 +208,7 @@ fun HomeScreen(
         // Active Download Live Banner (if any)
         if (activeDownload != null) {
             item {
-                GlassCard(
+                HypexGlassPanel(backdrop = backdrop,
                     modifier = Modifier.clickable { onNavigateToDownloads() },
                     borderColor = NeonCyan.copy(alpha = 0.5f)
                 ) {
@@ -258,7 +286,7 @@ fun HomeScreen(
 
         // URL Input & Extraction Card
         item {
-            GlassCard {
+            HypexGlassPanel(backdrop = backdrop) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "Enter Media or Playlist URL",
@@ -461,7 +489,7 @@ fun HomeScreen(
             }
 
             items(recentDownloads) { task ->
-                GlassCard {
+                HypexGlassPanel(backdrop = backdrop) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -509,6 +537,7 @@ fun HomeScreen(
                     }
                 }
             }
+        }
         }
     }
 }
