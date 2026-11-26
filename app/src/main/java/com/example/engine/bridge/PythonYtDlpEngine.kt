@@ -159,17 +159,20 @@ class PythonYtDlpEngine(private val context: Context) : EngineBridge {
                     outputDir,
                     "${videoFile.nameWithoutExtension.substringBefore(".video")}.mp4"
                 )
-                val merged = mediaProcessor.mergeVideoAndAudio(
-                    videoFile = videoFile,
-                    audioFile = audioFile,
-                    outputFile = mergedFile
-                ) { fraction ->
-                    emitProcessingProgress(task.id, mergedFile, onProgress, fraction)
-                }.getOrThrow()
-                check(merged.isFile && merged.length() > 0L) { "Native media merge produced no output" }
-                videoFile.delete()
-                audioFile.delete()
-                merged
+                try {
+                    val merged = mediaProcessor.mergeVideoAndAudio(
+                        videoFile = videoFile,
+                        audioFile = audioFile,
+                        outputFile = mergedFile
+                    ) { fraction ->
+                        emitProcessingProgress(task.id, mergedFile, onProgress, fraction)
+                    }.getOrThrow()
+                    check(merged.isFile && merged.length() > 0L) { "Native media merge produced no output" }
+                    merged
+                } finally {
+                    videoFile.delete()
+                    audioFile.delete()
+                }
             } else {
                 val outputPath = response.optString("output_file")
                 val file = File(outputPath)
