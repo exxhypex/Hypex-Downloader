@@ -20,12 +20,14 @@ android {
     versionCode = 1
     versionName = "1.0"
 
+
     ndk {
-      abiFilters += listOf("arm64-v8a", "x86_64")
+      abiFilters += listOf("arm64-v8a")
     }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
+
 
   signingConfigs {
     create("release") {
@@ -46,7 +48,8 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
@@ -117,6 +120,7 @@ dependencies {
   implementation(libs.okhttp)
   // LGPL audio-only FFmpeg build: MP3/Opus/Vorbis conversion without the full video codec bundle.
   implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
+  implementation("com.arthenica:smart-exception-java:0.2.1")
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
