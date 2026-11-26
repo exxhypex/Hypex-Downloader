@@ -1,151 +1,82 @@
-name: HYPEX Downloader Android CI
+name: HYPEX Downloader CI
 
 on:
-  push:
-    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  python-tests:
-    name: Python Engine Unit Tests
+  build:
+    name: Test and build Android APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v7
+      - uses: actions/setup-java@v6
         with:
-          python-version: '3.13'
-
-      - name: Run Python yt-dlp Engine Tests
-        run: python3 -m unittest discover -s app/src/test/python -p "test_*.py" -v
-
-  android-build:
-    name: Build & Test Android APK
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK & Platform 36.1
-        run: |
-          set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          if [ -z "$SDK_ROOT" ] || [ ! -w "$SDK_ROOT" ]; then
-            SDK_ROOT="$HOME/android-sdk"
-          fi
-          mkdir -p "$SDK_ROOT"
-
-          if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            echo "Installing Android command-line tools into $SDK_ROOT..."
-            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip -o /tmp/cmdline-tools.zip
-            rm -rf /tmp/cmdline-tools-extract
-            unzip -q -o /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
-            rm -rf "$SDK_ROOT/cmdline-tools/latest"
-            mkdir -p "$SDK_ROOT/cmdline-tools"
-            mv /tmp/cmdline-tools-extract/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
-            rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract
-          fi
-
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "build-tools;36.0.0" "platforms;android-36.1" || \
-            "$SDKMANAGER" --sdk_root="$SDK_ROOT" --channel=1 "platform-tools" "build-tools;36.0.0" "platforms;android-36.1"
-
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-
-      - name: Restore debug keystore
-        run: |
-          if [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-          else
-            keytool -genkeypair -v -keystore debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Set up Python 3.13 for Chaquopy
-        uses: actions/setup-python@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+      - uses: android-actions/setup-android@v3
         with:
-          cache-provider: 'basic'
+          packages: 'platform-tools platforms;android-36.1 build-tools;36.0.0'
+          accept-android-sdk-licenses: true
 
-      - name: Run Unit & Robolectric Tests
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+      - uses: gradle/actions/setup-gradle@v6
 
-      - name: Upload unit test reports
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: hypex-unit-test-reports
-          path: app/build/reports/tests/testDebugUnitTest/
-          if-no-files-found: ignore
-
-      - name: Upload unit test reports
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: hypex-unit-test-reports
-          path: app/build/reports/tests/testDebugUnitTest/
-          if-no-files-found: ignore
-
-      - name: Run Android Lint
-        run: ./gradlew :app:lintDebug --no-daemon --stacktrace
-
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
-
-      - name: Prepare Release Keystore
-        id: release_signing
+      - name: Prepare signing keys
         env:
           RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           SECRET_STORE_PASS: ${{ secrets.STORE_PASSWORD }}
           SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
+          chmod +x gradlew
+          if [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
           if [ -n "$RELEASE_KEYSTORE_B64" ]; then
-            echo "$RELEASE_KEYSTORE_B64" | base64 -d > "${{ runner.temp }}/release.jks"
-            echo "KEYSTORE_PATH=${{ runner.temp }}/release.jks" >> "$GITHUB_ENV"
+            echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "STORE_PASSWORD=$SECRET_STORE_PASS" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=$SECRET_KEY_PASS" >> "$GITHUB_ENV"
           else
-            CI_PASS="hypex-ci-build-pass"
-            keytool -genkeypair -v -keystore "${{ runner.temp }}/ci-release.jks" \
-              -storepass "$CI_PASS" -alias upload -keypass "$CI_PASS" \
-              -keyalg RSA -keysize 2048 -validity 365 \
-              -dname "CN=HYPEX CI,O=HYPEX,C=US"
-            echo "KEYSTORE_PATH=${{ runner.temp }}/ci-release.jks" >> "$GITHUB_ENV"
-            echo "STORE_PASSWORD=$CI_PASS" >> "$GITHUB_ENV"
-            echo "KEY_PASSWORD=$CI_PASS" >> "$GITHUB_ENV"
+            PASS="hypex-ci-build-pass"
+            keytool -genkeypair -v -keystore "$RUNNER_TEMP/release.jks" -storepass "$PASS" -alias upload -keypass "$PASS" -keyalg RSA -keysize 2048 -validity 365 -dname "CN=HYPEX CI,O=HYPEX,C=US"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
           fi
 
-      - name: Build Release APK
-        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+      - name: Test Python engine
+        run: python -m unittest discover -s app/src/test/python -p "test_*.py" -v
 
-      - name: Upload Debug & Release APKs
+      - name: Test, lint and build APKs
+        run: >-
+          ./gradlew
+          :app:testDebugUnitTest
+          :app:lintDebug
+          :app:assembleDebug
+          :app:assembleRelease
+          --no-daemon
+
+      - name: Upload build outputs and test reports
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: hypex-downloader-apks
+          name: hypex-build-${{ github.run_id }}
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
