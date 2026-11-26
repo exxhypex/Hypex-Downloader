@@ -1,11 +1,11 @@
 # Project structure
 
-Hypex Downloader remains a single Android application module. The source tree is grouped by responsibility without introducing extra Gradle modules or changing Kotlin package names.
+Hypex Downloader remains a single Android application module. The source tree is grouped by responsibility without introducing extra Gradle modules. Kotlin sources use the project namespace `com.exxhypex.hypexdownloader`.
 
 ```text
 app/src/main/
 ├── AndroidManifest.xml
-├── java/com/example/
+├── java/com/exxhypex/hypexdownloader/
 │   ├── MainActivity.kt
 │   ├── HypexApp.kt
 │   ├── data/
@@ -44,4 +44,4 @@ app/src/main/
 - `ui/`: Compose screens, dialogs, reusable components and theme.
 - `python/downloader/`: embedded yt-dlp implementation and its Python helpers.
 
-The refactor only changes source-file locations. Kotlin package declarations, public APIs, dependencies, manifest declarations, Python paths and runtime behavior are intentionally unchanged. Keep this as one Gradle module until there is a concrete need for independent module builds or ownership.
+The refactor updates Kotlin package declarations and source paths to the project namespace. The published application ID remains `com.hypex.downloader` so existing installs retain the same app identity. Public APIs, dependencies, manifest component names, Python paths and runtime behavior are otherwise unchanged. Keep this as one Gradle module until there is a concrete need for independent module builds or ownership.
