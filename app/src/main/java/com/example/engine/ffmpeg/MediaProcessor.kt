@@ -79,9 +79,26 @@ class MediaProcessor {
                 throw IllegalStateException("Could not replace existing output file")
             }
 
+            val videoMime = videoFormat.getString(MediaFormat.KEY_MIME).orEmpty()
+            val audioMime = audioFormat.getString(MediaFormat.KEY_MIME).orEmpty()
+            require(videoMime == "video/avc") {
+                "Native MP4 merge requires H.264/AVC video; received $videoMime"
+            }
+            require(audioMime == "audio/mp4a-latm") {
+                "Native MP4 merge requires AAC audio; received $audioMime"
+            }
+
             muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val videoMuxerTrack = muxer.addTrack(videoFormat)
-            val audioMuxerTrack = muxer.addTrack(audioFormat)
+            val videoMuxerTrack = try {
+                muxer.addTrack(videoFormat)
+            } catch (error: Exception) {
+                throw IllegalArgumentException("Failed to add H.264 video track to MP4 muxer: ${error.message}", error)
+            }
+            val audioMuxerTrack = try {
+                muxer.addTrack(audioFormat)
+            } catch (error: Exception) {
+                throw IllegalArgumentException("Failed to add AAC audio track to MP4 muxer: ${error.message}", error)
+            }
             muxer.start()
             muxerStarted = true
 
