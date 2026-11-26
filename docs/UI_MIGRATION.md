@@ -34,3 +34,7 @@ The app keeps `minSdk 24`. Miuix Glass targets API 24, while its shader blur hel
 - Keep queueing, sequential video/audio download and merge, pause/resume/cancel/retry, playlists, cookies, storage, permissions, engine updates, and recovery behavior unchanged.
 - Run Python unit tests, Android unit tests, lint, debug APK, and release APK builds for each migration PR.
 - Verify the API 24 opaque fallback and API 33+ shader blur before considering the Home phase complete.
+
+## Phase 1 implementation boundary
+
+The first Home pass uses `Modifier.glassPanel` on the active-download banner, URL extraction container, and recent-download cards. The ambient backdrop is a separate recorded layer so the glass surfaces do not sample themselves. The URL field, action button, quick preset chips, and platform labels remain on the existing Compose/Material 3 controls for this incremental step.
