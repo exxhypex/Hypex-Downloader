@@ -153,7 +153,11 @@ class HypexEngine:
             return True, selector.split("+", 1)
 
         # A user-selected video-only format ID also needs a separate audio stream.
-        if selector and selector.isdigit():
+        is_simple_format_id = (
+            selector not in ("", "best", "worst")
+            and not any(char in selector for char in "[]/,+()")
+        )
+        if is_simple_format_id:
             options = self._build_options(is_extract_only=True)
             with ydl_class(options) as ydl:
                 info = ydl.extract_info(url, download=False)
