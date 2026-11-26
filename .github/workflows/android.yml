@@ -75,14 +75,30 @@ jobs:
           done
           exit 1
 
-      - name: Upload build outputs and test reports
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hypex-debug-arm64-apk
+          path: app/build/outputs/apk/debug/**/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload release APK
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hypex-release-arm64-apk
+          path: app/build/outputs/apk/release/**/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload test and lint reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: hypex-build-${{ github.run_id }}
+          name: hypex-test-reports
           path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
             app/build/reports/tests/testDebugUnitTest/
             app/build/reports/lint-results-debug.html
           if-no-files-found: ignore
