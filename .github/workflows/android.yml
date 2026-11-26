@@ -63,13 +63,17 @@ jobs:
         run: python -m unittest discover -s app/src/test/python -p "test_*.py" -v
 
       - name: Test, lint and build APKs
-        run: >-
-          ./gradlew
-          :app:testDebugUnitTest
-          :app:lintDebug
-          :app:assembleDebug
-          :app:assembleRelease
-          --no-daemon
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --no-daemon --no-configuration-cache; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle attempt $attempt failed; retrying after a short delay..."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
       - name: Upload build outputs and test reports
         if: always()
