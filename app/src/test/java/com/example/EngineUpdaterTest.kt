@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.engine.updates.EngineUpdater
 import com.example.engine.updates.UpdateChannel
 import com.example.engine.updates.UpdateInstallState
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -51,7 +52,7 @@ class EngineUpdaterTest {
     }
 
     @Test
-    fun `stable and nightly channel release parsing detects updates and channel switches`() = runTest {
+    fun `stable and nightly channel release parsing detects updates and channel switches`() = runBlocking {
         val stableJson = """
             {
               "tag_name": "2026.11.15",

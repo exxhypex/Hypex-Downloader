@@ -15,7 +15,7 @@ import com.example.core.model.DownloadTask
 import com.example.core.model.PlaylistInfo
 import com.example.core.model.PlaylistItem
 import com.example.engine.bridge.EngineBridge
-import com.example.engine.network.NativeMediaEngine
+import com.example.engine.bridge.HybridMediaEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -30,7 +30,7 @@ class DownloadRepository(
     private val downloadDao: DownloadDao = database.downloadDao(),
     private val queueDao: QueueDao = database.queueDao(),
     private val playlistDao: PlaylistDao = database.playlistDao(),
-    val engineBridge: EngineBridge = NativeMediaEngine(context)
+    val engineBridge: EngineBridge = HybridMediaEngine(context)
 ) {
     val allDownloads: Flow<List<DownloadTask>> = downloadDao.getAllDownloads().map { list ->
         list.map { it.toModel() }
