@@ -52,6 +52,10 @@ class DownloadRepository(
         downloadDao.getDownloadById(id)?.toModel()
     }
 
+    suspend fun getNextQueuedTask(): DownloadTask? = withContext(Dispatchers.IO) {
+        downloadDao.getNextQueuedDownload()?.toModel()
+    }
+
     suspend fun enqueueDownload(
         url: String,
         title: String,
