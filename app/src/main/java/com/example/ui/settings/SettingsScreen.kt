@@ -2,6 +2,9 @@ package com.example.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,6 +105,9 @@ fun SettingsScreen(
     var showLicensesDialog by remember { mutableStateOf(false) }
 
     var wifiOnly by remember { mutableStateOf(false) }
+    val batteryManager = context.getSystemService(PowerManager::class.java)
+    val batteryExemptionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+        batteryManager?.isIgnoringBatteryOptimizations(context.packageName) == true
 
     if (showCookieDialog) {
         CookieManagerDialog(viewModel = viewModel, onDismiss = { showCookieDialog = false })
@@ -673,7 +679,7 @@ fun SettingsScreen(
                     SettingsRowItem(
                         icon = Icons.Default.BatteryAlert,
                         title = "Battery & Background Execution",
-                        subtitle = "Prevent Android OS from pausing long tasks",
+                        subtitle = if (batteryExemptionGranted) "Battery optimization exemption enabled" else "Allow unrestricted background downloads",
                         onClick = { showBatteryGuidance = true }
                     )
                 }
