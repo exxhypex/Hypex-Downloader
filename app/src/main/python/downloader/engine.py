@@ -90,6 +90,8 @@ class HypexEngine:
             options["cookiefile"] = cookie_path
 
         if is_extract_only:
+            # Extraction must enumerate streams without selecting a download format.
+            options.pop("format", None)
             options["extract_flat"] = "in_playlist"
             options["skip_download"] = True
             return options
@@ -142,16 +144,30 @@ class HypexEngine:
                 is_extract_only=False
             )
 
-            with ydl_class(options) as ydl:
-                info = ydl.extract_info(url, download=True)
-                if info is None:
-                    raise RuntimeError("yt-dlp completed without returning media metadata")
-                filename = info.get("filepath") or info.get("_filename") or ydl.prepare_filename(info)
-                return json.dumps({
-                    "success": True,
-                    "task_id": task_id,
-                    "output_file": filename
-                })
+            selectors = [options["format"]]
+            if options["format"] != "best":
+                selectors.append("best")
+
+            for index, selector in enumerate(selectors):
+                attempt_options = dict(options)
+                attempt_options["format"] = selector
+                try:
+                    with ydl_class(attempt_options) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                        if info is None:
+                            raise RuntimeError("yt-dlp completed without returning media metadata")
+                        filename = info.get("filepath") or info.get("_filename") or ydl.prepare_filename(info)
+                        return json.dumps({
+                            "success": True,
+                            "task_id": task_id,
+                            "output_file": filename,
+                            "format_fallback": index > 0
+                        })
+                except Exception as error:
+                    if classify_error(error).code != "FORMAT_NOT_AVAILABLE" or index == len(selectors) - 1:
+                        raise
+
+            raise RuntimeError("No compatible media format was found")
         except Exception as e:
             if "DOWNLOAD_CANCELLED" in str(e):
                 err = DownloadCancelledError()
