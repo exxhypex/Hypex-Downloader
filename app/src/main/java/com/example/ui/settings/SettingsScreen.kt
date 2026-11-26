@@ -120,23 +120,44 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.BatteryAlert, contentDescription = null, tint = NeonCyan)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Background Execution Guide", fontWeight = FontWeight.Bold, color = TextPrimary)
+                    Text("Background Execution", fontWeight = FontWeight.Bold, color = TextPrimary)
                 }
             },
             text = {
                 Text(
-                    text = "To ensure long video and playlist downloads finish reliably in the background without Android OS suspending the process:\n\n" +
-                            "1. HYPEX utilizes an Android Foreground Service with partial CPU WakeLock.\n" +
-                            "2. In system App Settings, set Battery Usage to 'Unrestricted'.\n" +
-                            "3. Disable MIUI / OEM aggressive background killing for HYPEX Downloader.",
+                    text = if (batteryExemptionGranted) {
+                        "Battery optimization is already disabled for HYPEX. If downloads are still interrupted, set Battery Usage to Unrestricted and disable OEM-specific background restrictions."
+                    } else {
+                        "Allow HYPEX to be exempt from Android battery optimization so long downloads are less likely to be paused. This does not disable battery saver globally. You can also set HYPEX Battery Usage to Unrestricted in system settings."
+                    },
                     fontSize = 13.sp,
                     color = TextSecondary,
                     lineHeight = 18.sp
                 )
             },
             confirmButton = {
-                TextButton(onClick = { showBatteryGuidance = false }) {
-                    Text("Got it", color = NeonCyan)
+                TextButton(onClick = {
+                    showBatteryGuidance = false
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !batteryExemptionGranted) {
+                        val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:" + context.packageName)
+                        }
+                        runCatching { context.startActivity(request) }.onFailure {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        }
+                    }
+                }) {
+                    Text(if (batteryExemptionGranted) "Done" else "Allow", color = NeonCyan)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showBatteryGuidance = false
+                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:" + context.packageName)
+                    })
+                }) {
+                    Text("App settings", color = TextSecondary)
                 }
             },
             containerColor = SurfaceDark
