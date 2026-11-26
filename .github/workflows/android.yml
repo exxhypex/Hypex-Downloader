@@ -39,16 +39,11 @@ jobs:
           SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-
           if [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
           else
-            keytool -genkeypair -v -keystore debug.keystore \\
-              -storepass android -alias androiddebugkey -keypass android \\
-              -keyalg RSA -keysize 2048 -validity 10000 \\
-              -dname "CN=Android Debug,O=Android,C=US"
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
-
           if [ -n "$RELEASE_KEYSTORE_B64" ]; then
             echo "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
@@ -56,10 +51,7 @@ jobs:
             echo "KEY_PASSWORD=$SECRET_KEY_PASS" >> "$GITHUB_ENV"
           else
             PASS="hypex-ci-build-pass"
-            keytool -genkeypair -v -keystore "$RUNNER_TEMP/release.jks" \\
-              -storepass "$PASS" -alias upload -keypass "$PASS" \\
-              -keyalg RSA -keysize 2048 -validity 365 \\
-              -dname "CN=HYPEX CI,O=HYPEX,C=US"
+            keytool -genkeypair -v -keystore "$RUNNER_TEMP/release.jks" -storepass "$PASS" -alias upload -keypass "$PASS" -keyalg RSA -keysize 2048 -validity 365 -dname "CN=HYPEX CI,O=HYPEX,C=US"
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "STORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
